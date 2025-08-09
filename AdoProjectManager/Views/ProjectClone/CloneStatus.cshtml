@@ -1,0 +1,274 @@
+@model AdoProjectManager.Models.ProjectCloneRequest
+
+@{
+    ViewData["Title"] = "Project Clone Status";
+    var sourceProject = ViewBag.SourceProject as AdoProjectManager.Models.AdoProject;
+    var cloneRequest = ViewBag.CloneRequest as AdoProjectManager.Models.ProjectCloneRequest;
+}
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-12">
+            <h2><i class="fas fa-tasks"></i> Project Clone Status</h2>
+            <p class="lead">Cloning project: <strong>@sourceProject?.Name</strong> → <strong>@cloneRequest?.TargetProjectName</strong></p>
+
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Clone Progress</h5>
+                </div>
+                <div class="card-body">
+                    <div id="progressContainer">
+                        <div class="progress mb-3" style="height: 25px;">
+                            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                                <span id="progressText">Initializing...</span>
+                            </div>
+                        </div>
+                        
+                        <div id="currentStep" class="alert alert-info">
+                            <i class="fas fa-spinner fa-spin"></i> Preparing to start clone operation...
+                        </div>
+                    </div>
+
+                    <div id="resultsContainer" style="display: none;">
+                        <div id="successResult" class="alert alert-success" style="display: none;">
+                            <h6><i class="fas fa-check-circle"></i> Clone Completed Successfully!</h6>
+                            <p class="mb-2">Your project has been cloned successfully.</p>
+                            <div id="newProjectDetails"></div>
+                        </div>
+
+                        <div id="errorResult" class="alert alert-danger" style="display: none;">
+                            <h6><i class="fas fa-times-circle"></i> Clone Failed</h6>
+                            <p class="mb-2">An error occurred during the clone operation:</p>
+                            <div id="errorDetails"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Clone Steps</h5>
+                </div>
+                <div class="card-body">
+                    <div id="stepsContainer">
+                        <div class="timeline">
+                            <!-- Steps will be populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-4">
+                <button id="startCloneBtn" type="button" class="btn btn-primary btn-lg">
+                    <i class="fas fa-play"></i> Start Clone Operation
+                </button>
+                <a href="@Url.Action("Index")" class="btn btn-secondary btn-lg">
+                    <i class="fas fa-arrow-left"></i> Back to Projects
+                </a>
+                <div id="cloneCompleteActions" style="display: none;" class="mt-3">
+                    <a id="viewNewProjectBtn" href="#" class="btn btn-success" target="_blank">
+                        <i class="fas fa-external-link-alt"></i> View New Project
+                    </a>
+                    <a href="@Url.Action("Index")" class="btn btn-primary">
+                        <i class="fas fa-plus"></i> Clone Another Project
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function() {
+            var cloneRequest = @Html.Raw(Json.Serialize(cloneRequest));
+            var isCloneStarted = false;
+            var cloneResult = null;
+
+            $('#startCloneBtn').click(function() {
+                if (isCloneStarted) return;
+                
+                isCloneStarted = true;
+                $(this).prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Cloning...');
+                
+                startCloneOperation();
+            });
+
+            function startCloneOperation() {
+                updateProgress(0, 'Starting clone operation...');
+                updateCurrentStep('info', 'Initiating project clone...');
+
+                $.ajax({
+                    url: '@Url.Action("ExecuteClone")',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(cloneRequest),
+                    success: function(response) {
+                        if (response.success) {
+                            handleCloneSuccess(response.data);
+                        } else {
+                            handleCloneError(response.error || 'Unknown error occurred');
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        handleCloneError('Network error: ' + error);
+                    }
+                });
+            }
+
+            function handleCloneSuccess(result) {
+                cloneResult = result;
+                updateProgress(100, 'Clone completed successfully!');
+                updateCurrentStep('success', 'Project clone completed successfully');
+                
+                $('#progressContainer').hide();
+                $('#successResult').show();
+                $('#resultsContainer').show();
+                
+                var details = `
+                    <ul class="mb-0">
+                        <li><strong>New Project ID:</strong> ${result.newProjectId}</li>
+                        <li><strong>Duration:</strong> ${formatDuration(result.duration)}</li>
+                        <li><strong>Steps Completed:</strong> ${result.completedSteps}/${result.totalSteps}</li>
+                    </ul>
+                `;
+                $('#newProjectDetails').html(details);
+                
+                if (result.newProjectUrl) {
+                    $('#viewNewProjectBtn').attr('href', result.newProjectUrl).show();
+                }
+                
+                $('#cloneCompleteActions').show();
+                displaySteps(result.steps);
+            }
+
+            function handleCloneError(error) {
+                updateProgress(100, 'Clone failed');
+                updateCurrentStep('danger', 'Clone operation failed');
+                
+                $('#progressContainer').hide();
+                $('#errorResult').show();
+                $('#resultsContainer').show();
+                
+                $('#errorDetails').html('<code>' + error + '</code>');
+                $('#startCloneBtn').prop('disabled', false).html('<i class="fas fa-redo"></i> Retry Clone');
+                isCloneStarted = false;
+            }
+
+            function updateProgress(percentage, text) {
+                $('#progressBar').css('width', percentage + '%').attr('aria-valuenow', percentage);
+                $('#progressText').text(text);
+            }
+
+            function updateCurrentStep(type, message) {
+                var alertClass = 'alert-info';
+                var icon = 'fas fa-spinner fa-spin';
+                
+                switch(type) {
+                    case 'success':
+                        alertClass = 'alert-success';
+                        icon = 'fas fa-check-circle';
+                        break;
+                    case 'danger':
+                        alertClass = 'alert-danger';
+                        icon = 'fas fa-times-circle';
+                        break;
+                    case 'warning':
+                        alertClass = 'alert-warning';
+                        icon = 'fas fa-exclamation-triangle';
+                        break;
+                }
+                
+                $('#currentStep').removeClass().addClass('alert ' + alertClass)
+                    .html(`<i class="${icon}"></i> ${message}`);
+            }
+
+            function displaySteps(steps) {
+                var stepsHtml = '';
+                
+                steps.forEach(function(step, index) {
+                    var iconClass = step.success ? 'fas fa-check-circle text-success' : 'fas fa-times-circle text-danger';
+                    var duration = formatDuration(step.duration);
+                    
+                    stepsHtml += `
+                        <div class="timeline-item">
+                            <div class="timeline-marker">
+                                <i class="${iconClass}"></i>
+                            </div>
+                            <div class="timeline-content">
+                                <h6>${step.stepName}</h6>
+                                <p class="mb-1">${step.message}</p>
+                                <small class="text-muted">Duration: ${duration}</small>
+                                ${step.error ? `<div class="text-danger small mt-1">Error: ${step.error}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                $('#stepsContainer .timeline').html(stepsHtml);
+            }
+
+            function formatDuration(duration) {
+                // Duration format: "00:01:23.456" (hours:minutes:seconds.milliseconds)
+                if (!duration) return 'Unknown';
+                
+                var parts = duration.split(':');
+                if (parts.length >= 3) {
+                    var hours = parseInt(parts[0]);
+                    var minutes = parseInt(parts[1]);
+                    var seconds = parseFloat(parts[2]);
+                    
+                    if (hours > 0) {
+                        return `${hours}h ${minutes}m ${Math.round(seconds)}s`;
+                    } else if (minutes > 0) {
+                        return `${minutes}m ${Math.round(seconds)}s`;
+                    } else {
+                        return `${seconds.toFixed(1)}s`;
+                    }
+                }
+                return duration;
+            }
+        });
+    </script>
+    
+    <style>
+        .timeline {
+            position: relative;
+            padding-left: 30px;
+        }
+        
+        .timeline-item {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        
+        .timeline-marker {
+            position: absolute;
+            left: -30px;
+            top: 0;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: -20px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: #dee2e6;
+        }
+        
+        .timeline-content {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 3px solid #007bff;
+        }
+    </style>
+}

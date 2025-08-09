@@ -1,0 +1,176 @@
+@model AdoProjectManager.Models.SettingsViewModel
+
+@{
+    Layout = "_Layout";
+    ViewData["Title"] = "Settings";
+}
+
+<div class="row">
+    <div class="col-md-10 mx-auto">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">
+                    <i class="bi bi-gear"></i> Azure DevOps Connection Settings
+                </h4>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info" role="alert">
+                    <h6><i class="bi bi-info-circle"></i> Quick Setup Guide</h6>
+                    <ol class="mb-0">
+                        <li>Enter your Azure DevOps organization URL (e.g., https://dev.azure.com/your-organization)</li>
+                        <li>Create a <strong>Personal Access Token (PAT)</strong> in Azure DevOps with at least <code>Code (read)</code> and <code>Project and team (read)</code> permissions</li>
+                        <li>Paste your PAT in the authentication section below</li>
+                        <li>Test the connection to verify everything works</li>
+                    </ol>
+                </div>
+
+                @if (TempData["SuccessMessage"] != null)
+                {
+                    <div class="alert alert-success alert-dismissible fade show" role="alert">
+                        <i class="bi bi-check-circle"></i> @TempData["SuccessMessage"]
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                }
+
+                @if (TempData["ErrorMessage"] != null)
+                {
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <i class="bi bi-exclamation-triangle"></i> @TempData["ErrorMessage"]
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                }
+
+                <form method="post" id="settingsForm">
+                    <!-- Hidden field for auth type since we only support PAT now -->
+                    <input type="hidden" asp-for="AuthType" value="PersonalAccessToken" />
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label asp-for="OrganizationUrl" class="form-label"></label>
+                                <input asp-for="OrganizationUrl" class="form-control" placeholder="https://dev.azure.com/your-organization" />
+                                <span asp-validation-for="OrganizationUrl" class="text-danger"></span>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label asp-for="DefaultClonePath" class="form-label"></label>
+                                <input asp-for="DefaultClonePath" class="form-control" />
+                                <span asp-validation-for="DefaultClonePath" class="text-danger"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Personal Access Token Section -->
+                    <div class="card bg-light mb-3">
+                        <div class="card bg-light mb-3">
+                            <div class="card-header">
+                                <h6 class="mb-0"><i class="bi bi-key"></i> Personal Access Token Configuration</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label asp-for="PersonalAccessToken" class="form-label"></label>
+                                    <input asp-for="PersonalAccessToken" type="password" class="form-control" placeholder="Enter your PAT here" />
+                                    <span asp-validation-for="PersonalAccessToken" class="text-danger"></span>
+                                    <div class="form-text">
+                                        <i class="bi bi-info-circle"></i> Required scopes: <strong>Code (read)</strong> and <strong>Project and team (read)</strong>
+                                    </div>
+                                </div>
+                                
+                                <div class="alert alert-info">
+                                    <h6><i class="bi bi-lightbulb"></i> How to create a Personal Access Token:</h6>
+                                    <ol class="mb-2">
+                                        <li>Go to your Azure DevOps organization</li>
+                                        <li>Click on your profile picture → "Personal access tokens"</li>
+                                        <li>Click "New Token"</li>
+                                        <li>Select scopes: <strong>Code (read)</strong> and <strong>Project and team (read)</strong></li>
+                                        <li>Copy the generated token and paste it above</li>
+                                    </ol>
+                                    <a href="javascript:void(0)" onclick="openPATCreation()" class="btn btn-sm btn-outline-info">
+                                        <i class="bi bi-box-arrow-up-right"></i> Create PAT in Azure DevOps
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 mb-3">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-floppy"></i> Save Settings
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="testConnection()">
+                            <i class="bi bi-wifi"></i> Test Connection
+                        </button>
+                        <a href="/" class="btn btn-outline-primary">
+                            <i class="bi bi-arrow-left"></i> Back to Projects
+                        </a>
+                    </div>
+
+                    <div id="connectionResult" class="alert" style="display: none;" role="alert"></div>
+                </form>
+
+                <div class="alert alert-warning mt-4" role="alert">
+                    <i class="bi bi-shield-exclamation"></i>
+                    <strong>Security Note:</strong> Settings are stored locally in the application database. For production deployments, consider using Azure Key Vault or other secure storage solutions.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        function testConnection() {
+            const form = document.getElementById('settingsForm');
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+            
+            // Set auth type to PAT since that's the only option now
+            data.AuthType = 0; // PersonalAccessToken = 0
+
+            const resultDiv = document.getElementById('connectionResult');
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'alert alert-info';
+            resultDiv.innerHTML = '<i class="bi bi-hourglass-split"></i> Testing connection...';
+
+            fetch('/Home/TestConnection', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    resultDiv.className = 'alert alert-success';
+                    resultDiv.innerHTML = '<i class="bi bi-check-circle"></i> ' + result.message;
+                } else {
+                    resultDiv.className = 'alert alert-danger';
+                    resultDiv.innerHTML = '<i class="bi bi-x-circle"></i> ' + result.message;
+                }
+            })
+            .catch(error => {
+                resultDiv.className = 'alert alert-danger';
+                resultDiv.innerHTML = '<i class="bi bi-x-circle"></i> Error testing connection: ' + error.message;
+            });
+        }
+
+        function openPATCreation() {
+            const orgUrl = document.getElementById('OrganizationUrl').value;
+            if (orgUrl) {
+                // Extract organization name from URL
+                const orgMatch = orgUrl.match(/dev\.azure\.com\/([^\/]+)/);
+                if (orgMatch) {
+                    const orgName = orgMatch[1];
+                    const patUrl = `https://dev.azure.com/${orgName}/_usersSettings/tokens`;
+                    window.open(patUrl, '_blank');
+                } else {
+                    alert('Please enter a valid Azure DevOps organization URL first');
+                }
+            } else {
+                alert('Please enter your organization URL first to open the PAT creation page');
+            }
+        }
+    </script>
+}

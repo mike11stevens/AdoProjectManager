@@ -1,0 +1,225 @@
+@model AdoProjectManager.Models.ProjectCloneRequest
+
+@{
+    ViewData["Title"] = "Configure Project Clone";
+    var sourceProject = ViewBag.SourceProject as AdoProjectManager.Models.AdoProject;
+}
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-12">
+            <h2><i class="fas fa-cog"></i> Configure Project Clone</h2>
+            <p class="lead">Configure options for cloning project: <strong>@sourceProject?.Name</strong></p>
+
+            @if (sourceProject != null)
+            {
+                <div class="alert alert-info mb-4">
+                    <h6><i class="fas fa-info-circle"></i> Source Project Details</h6>
+                    <ul class="mb-0">
+                        <li><strong>Name:</strong> @sourceProject.Name</li>
+                        <li><strong>Description:</strong> @(string.IsNullOrEmpty(sourceProject.Description) ? "No description" : sourceProject.Description)</li>
+                        <li><strong>State:</strong> @sourceProject.State</li>
+                        <li><strong>Last Updated:</strong> @sourceProject.LastUpdateTime.ToString("MMM dd, yyyy")</li>
+                    </ul>
+                </div>
+            }
+
+            <form asp-action="StartClone" method="post">
+                @Html.AntiForgeryToken()
+                <input type="hidden" asp-for="SourceProjectId" />
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Target Project Information</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label asp-for="TargetProjectName" class="form-label">
+                                <i class="fas fa-project-diagram"></i> New Project Name *
+                            </label>
+                            <input asp-for="TargetProjectName" class="form-control" placeholder="Enter the name for the new project" required />
+                            <span asp-validation-for="TargetProjectName" class="text-danger"></span>
+                        </div>
+
+                        <div class="form-group">
+                            <label asp-for="TargetProjectDescription" class="form-label">
+                                <i class="fas fa-file-alt"></i> Project Description
+                            </label>
+                            <textarea asp-for="TargetProjectDescription" class="form-control" rows="3" 
+                                      placeholder="Enter a description for the new project (optional)"></textarea>
+                            <span asp-validation-for="TargetProjectDescription" class="text-danger"></span>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i>
+                            <strong>Note:</strong> Projects will be cloned within the current Azure DevOps organization for security and consistency.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Clone Options</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Project Components</h6>
+                                <div class="form-check">
+                                    <input asp-for="Options.CloneProjectSettings" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.CloneProjectSettings" class="form-check-label">
+                                        Clone Project Settings
+                                    </label>
+                                    <small class="form-text text-muted">Project-level configuration and settings</small>
+                                </div>
+
+                                <div class="form-check">
+                                    <input asp-for="Options.CloneAreaPaths" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.CloneAreaPaths" class="form-check-label">
+                                        Clone Area Paths
+                                    </label>
+                                    <small class="form-text text-muted">Work item area classification structure</small>
+                                </div>
+
+                                <div class="form-check">
+                                    <input asp-for="Options.CloneIterationPaths" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.CloneIterationPaths" class="form-check-label">
+                                        Clone Iteration Paths
+                                    </label>
+                                    <small class="form-text text-muted">Sprint and iteration structure</small>
+                                </div>
+
+                                <div class="form-check">
+                                    <input asp-for="Options.CloneQueries" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.CloneQueries" class="form-check-label">
+                                        Clone Work Item Queries
+                                    </label>
+                                    <small class="form-text text-muted">Saved queries and folder structure</small>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6>Development Assets</h6>
+                                <div class="form-check">
+                                    <input asp-for="Options.CloneRepositories" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.CloneRepositories" class="form-check-label">
+                                        Clone Git Repositories
+                                    </label>
+                                    <small class="form-text text-muted">All Git repositories in the project</small>
+                                </div>
+
+                                <div class="form-check">
+                                    <input asp-for="Options.CloneBuildPipelines" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.CloneBuildPipelines" class="form-check-label">
+                                        Clone Build Pipelines
+                                    </label>
+                                    <small class="form-text text-muted">CI/CD build definitions</small>
+                                </div>
+
+                                <div class="form-check">
+                                    <input asp-for="Options.CloneWorkItems" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.CloneWorkItems" class="form-check-label">
+                                        Clone Work Items
+                                    </label>
+                                    <small class="form-text text-muted">User stories, tasks, bugs, etc.</small>
+                                </div>
+
+                                <div class="form-check">
+                                    <input asp-for="Options.CloneDashboards" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.CloneDashboards" class="form-check-label">
+                                        Clone Dashboards
+                                    </label>
+                                    <small class="form-text text-muted">Project dashboards and widgets</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr />
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Advanced Repository Options</h6>
+                                <div class="form-check">
+                                    <input asp-for="Options.IncludeAllBranches" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.IncludeAllBranches" class="form-check-label">
+                                        Include All Branches
+                                    </label>
+                                    <small class="form-text text-muted">Clone all branches, not just the default branch</small>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6>Work Item Options</h6>
+                                <div class="form-check">
+                                    <input asp-for="Options.IncludeWorkItemHistory" class="form-check-input" type="checkbox" />
+                                    <label asp-for="Options.IncludeWorkItemHistory" class="form-check-label">
+                                        Include Work Item History
+                                    </label>
+                                    <small class="form-text text-muted">Include full revision history (slower)</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header bg-warning">
+                        <h5 class="mb-0"><i class="fas fa-exclamation-triangle"></i> Important Notes</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul class="mb-0">
+                            <li><strong>Permissions:</strong> You must have appropriate permissions in both source and target organizations</li>
+                            <li><strong>Time:</strong> Large projects may take considerable time to clone</li>
+                            <li><strong>Storage:</strong> Ensure sufficient storage space in the target organization</li>
+                            <li><strong>Teams:</strong> Team structures and permissions are not cloned for security reasons</li>
+                            <li><strong>Process Templates:</strong> The target project will use the default process template</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <button type="submit" class="btn btn-primary btn-lg">
+                        <i class="fas fa-play"></i> Start Project Clone
+                    </button>
+                    <a href="@Url.Action("Index")" class="btn btn-secondary btn-lg">
+                        <i class="fas fa-times"></i> Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    @{await Html.RenderPartialAsync("_ValidationScriptsPartial");}
+    
+    <script>
+        $(document).ready(function() {
+            // Enable/disable dependent options
+            function toggleDependentOptions() {
+                var repoChecked = $('#Options_CloneRepositories').is(':checked');
+                $('#Options_IncludeAllBranches').prop('disabled', !repoChecked);
+                
+                var workItemsChecked = $('#Options_CloneWorkItems').is(':checked');
+                $('#Options_IncludeWorkItemHistory').prop('disabled', !workItemsChecked);
+            }
+
+            $('#Options_CloneRepositories, #Options_CloneWorkItems').change(toggleDependentOptions);
+            toggleDependentOptions();
+
+            // Validate organization URL format
+            $('#TargetOrganizationUrl').on('blur', function() {
+                var url = $(this).val();
+                if (url && !url.match(/^https:\/\/dev\.azure\.com\/[a-zA-Z0-9\-_]+\/?$/)) {
+                    $(this).addClass('is-invalid');
+                    if (!$(this).siblings('.invalid-feedback').length) {
+                        $(this).after('<div class="invalid-feedback">Please enter a valid Azure DevOps organization URL (e.g., https://dev.azure.com/your-org)</div>');
+                    }
+                } else {
+                    $(this).removeClass('is-invalid');
+                    $(this).siblings('.invalid-feedback').remove();
+                }
+            });
+        });
+    </script>
+}
