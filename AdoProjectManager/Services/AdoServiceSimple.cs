@@ -41,7 +41,88 @@ public class AdoService : IAdoService
         }
     }
 
+    public async Task<AdoProject?> GetProjectByIdAsync(string projectId)
+    {
+        try
+        {
+            var credentials = new VssBasicCredential(string.Empty, _settings.PersonalAccessToken);
+            var connection = new VssConnection(new Uri(_settings.OrganizationUrl), credentials);
+            var projectClient = connection.GetClient<ProjectHttpClient>();
+            var project = await projectClient.GetProject(projectId);
+            
+            if (project == null)
+            {
+                return null;
+            }
+
+            var adoProject = new AdoProject
+            {
+                Id = project.Id.ToString(),
+                Name = project.Name,
+                Description = project.Description ?? string.Empty,
+                Url = project.Url?.ToString() ?? string.Empty,
+                State = project.State.ToString(),
+                LastUpdateTime = project.LastUpdateTime,
+                Visibility = project.Visibility.ToString()
+            };
+
+            // Get repositories for this project
+            adoProject.Repositories = await GetRepositoriesAsync(project.Id.ToString());
+            
+            return adoProject;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting project by ID: {ProjectId}", projectId);
+            return null;
+        }
+    }
+
+    public async Task<PagedResult<AdoProject>> GetProjectsPagedAsync(ProjectSearchRequest request)
+    {
+        try
+        {
+            var allProjects = await GetProjectsAsync(request.IncludeRepositories);
+            
+            var result = new PagedResult<AdoProject>
+            {
+                CurrentPage = request.Page,
+                PageSize = request.PageSize,
+                SearchQuery = request.SearchQuery
+            };
+
+            // Apply search filter if provided
+            var filteredProjects = allProjects;
+            if (!string.IsNullOrEmpty(request.SearchQuery))
+            {
+                var searchQuery = request.SearchQuery.ToLowerInvariant();
+                filteredProjects = allProjects.Where(p => 
+                    p.Name.ToLowerInvariant().Contains(searchQuery) || 
+                    (p.Description?.ToLowerInvariant().Contains(searchQuery) ?? false)
+                ).ToList();
+            }
+
+            result.TotalItems = filteredProjects.Count;
+            result.TotalPages = (int)Math.Ceiling((double)result.TotalItems / request.PageSize);
+
+            var skip = (request.Page - 1) * request.PageSize;
+            result.Items = filteredProjects.Skip(skip).Take(request.PageSize).ToList();
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting paginated projects");
+            throw;
+        }
+    }
+
     public async Task<List<AdoProject>> GetProjectsAsync()
+    {
+        return await GetProjectsAsync(true); // Default to including repositories for backward compatibility
+    }
+
+    public async Task<List<AdoProject>> GetProjectsAsync(bool includeRepositories)
     {
         try
         {
@@ -58,6 +139,34 @@ public class AdoService : IAdoService
                 {
                     Id = project.Id.ToString(),
                     Name = project.Name,
+                    Description = project.Description ?? string.Empty,
+                    Url = project.Url?.ToString() ?? string.Empty,
+                    State = project.State.ToString(),
+                    LastUpdateTime = project.LastUpdateTime,
+                    Visibility = project.Visibility.ToString()
+                };
+
+                // Only get repositories if requested
+                if (includeRepositories)
+                {
+                    adoProject.Repositories = await GetRepositoriesAsync(project.Id.ToString());
+                }
+                else
+                {
+                    adoProject.Repositories = new List<Models.Repository>();
+                }
+                
+                result.Add(adoProject);
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting projects");
+            throw;
+        }
+    }
                     Description = project.Description ?? string.Empty,
                     Url = project.Url?.ToString() ?? string.Empty,
                     State = project.State.ToString(),

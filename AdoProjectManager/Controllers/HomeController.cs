@@ -17,11 +17,11 @@ public class HomeController : Controller
         _logger = logger;
     }
 
-    public async Task<IActionResult> Index()
+    public async Task<IActionResult> Index(int page = 1, string search = "")
     {
         try
         {
-            _logger.LogInformation("Index action called, retrieving settings...");
+            _logger.LogInformation("Index action called with page={Page}, search='{Search}'", page, search);
             var settings = await _settingsService.GetSettingsAsync();
             _logger.LogInformation("Settings retrieved: OrgUrl={OrgUrl}, HasPAT={HasPAT}", 
                 settings.OrganizationUrl, !string.IsNullOrEmpty(settings.PersonalAccessToken));
@@ -33,7 +33,7 @@ public class HomeController : Controller
                 ViewBag.Error = "⚙️ Azure DevOps connection not configured. Please set up your organization URL and Personal Access Token.";
                 ViewBag.ShowSettingsLink = true;
                 ViewBag.IsConfigurationMissing = true;
-                return View(new List<AdoProject>());
+                return View(new PagedResult<AdoProject>());
             }
 
             _logger.LogInformation("Testing connection...");
@@ -46,21 +46,54 @@ public class HomeController : Controller
                 ViewBag.Error = "❌ Unable to connect to Azure DevOps. Please verify your organization URL and authentication credentials.";
                 ViewBag.ShowSettingsLink = true;
                 ViewBag.IsConnectionError = true;
-                return View(new List<AdoProject>());
+                return View(new PagedResult<AdoProject>());
             }
 
-            _logger.LogInformation("Connection test passed, calling GetProjectsAsync()...");
-            var projects = await _adoService.GetProjectsAsync();
-            _logger.LogInformation("GetProjectsAsync() returned {ProjectCount} projects", projects.Count);
-            ViewBag.SuccessMessage = $"✅ Successfully connected! Found {projects.Count} project(s).";
-            return View(projects);
+            _logger.LogInformation("Connection test passed, calling GetProjectsPagedAsync()...");
+            var request = new ProjectSearchRequest
+            {
+                Page = page,
+                PageSize = 20, // Load 20 projects per page
+                SearchQuery = search,
+                IncludeRepositories = false // Don't load repositories for performance
+            };
+            
+            var pagedProjects = await _adoService.GetProjectsPagedAsync(request);
+            _logger.LogInformation("GetProjectsPagedAsync() returned {ItemCount} projects on page {Page} of {TotalPages} (Total: {TotalItems})", 
+                pagedProjects.Items.Count, pagedProjects.CurrentPage, pagedProjects.TotalPages, pagedProjects.TotalItems);
+            
+            ViewBag.SuccessMessage = $"✅ Successfully connected! Found {pagedProjects.TotalItems} project(s).";
+            return View(pagedProjects);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error loading projects");
             ViewBag.Error = "An error occurred while loading projects: " + ex.Message;
             ViewBag.ShowSettingsLink = true;
-            return View(new List<AdoProject>());
+            return View(new PagedResult<AdoProject>());
+        }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> SearchProjects(int page = 1, string search = "", int pageSize = 20)
+    {
+        try
+        {
+            var request = new ProjectSearchRequest
+            {
+                Page = page,
+                PageSize = pageSize,
+                SearchQuery = search,
+                IncludeRepositories = false
+            };
+            
+            var pagedProjects = await _adoService.GetProjectsPagedAsync(request);
+            return PartialView("_ProjectsTable", pagedProjects);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error searching projects");
+            return Json(new { error = ex.Message });
         }
     }
 

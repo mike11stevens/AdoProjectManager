@@ -2,7 +2,7 @@
     Layout = "_Layout";
 }
 
-@model List<AdoProjectManager.Models.AdoProject>
+@model PagedResult<AdoProjectManager.Models.AdoProject>
 
 @{
     ViewData["Title"] = "Projects";
@@ -25,7 +25,7 @@
                 <i class="bi bi-search"></i>
             </span>
             <input type="text" class="form-control" id="projectSearch" placeholder="Search projects by name..." 
-                   onkeyup="filterProjects()" autocomplete="off">
+                   value="@Model.SearchQuery" autocomplete="off">
             <button class="btn btn-outline-secondary" type="button" onclick="clearSearch()">
                 <i class="bi bi-x-lg"></i>
             </button>
@@ -33,7 +33,13 @@
         <small class="text-muted">Use * for wildcard matching (e.g., "Test*" or "*API*")</small>
     </div>
     <div class="col-md-6 text-end">
-        <small class="text-muted" id="projectCount"></small>
+        <small class="text-muted" id="projectCount">
+            Showing @Model.Items.Count of @Model.TotalItems project(s)
+            @if (Model.TotalPages > 1)
+            {
+                <span> - Page @Model.CurrentPage of @Model.TotalPages</span>
+            }
+        </small>
     </div>
 </div>
 
@@ -82,12 +88,20 @@
     </div>
 }
 
-@if (Model.Count == 0 && ViewBag.IsConfigurationMissing != true)
+@if (Model.TotalItems == 0 && ViewBag.IsConfigurationMissing != true)
 {
     <div class="text-center py-5">
         <i class="bi bi-inbox" style="font-size: 3rem; color: #6c757d;"></i>
-        <h3 class="mt-3 text-muted">No projects found</h3>
-        <p class="text-muted">Your Azure DevOps organization appears to have no projects, or they may not be accessible with your current permissions.</p>
+        @if (!string.IsNullOrEmpty(Model.SearchQuery))
+        {
+            <h3 class="mt-3 text-muted">No projects found matching "@Model.SearchQuery"</h3>
+            <p class="text-muted">Try adjusting your search criteria or clearing the search to see all projects.</p>
+        }
+        else
+        {
+            <h3 class="mt-3 text-muted">No projects found</h3>
+            <p class="text-muted">Your Azure DevOps organization appears to have no projects, or they may not be accessible with your current permissions.</p>
+        }
         <div class="mt-3">
             <a href="/Home/Settings" class="btn btn-outline-primary me-2">
                 <i class="bi bi-gear"></i> Check Settings
@@ -98,140 +112,104 @@
         </div>
     </div>
 }
-        </a>
-    </div>
-}
-else
+else if (Model.TotalItems > 0)
 {
-    <div class="card">
-        <div class="card-header">
-            <h5 class="mb-0">Available Projects</h5>
-        </div>
-        <div class="card-body">
-            <div class="table-responsive">
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>Project Name</th>
-                            <th>Description</th>
-                            <th>Visibility</th>
-                            <th>Last Updated</th>
-                            <th>Repositories</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var project in Model)
-                        {
-                            <tr>
-                                <td>
-                                    <strong>@project.Name</strong>
-                                    <br>
-                                    <small class="text-muted">ID: @project.Id</small>
-                                </td>
-                                <td>
-                                    @if (!string.IsNullOrEmpty(project.Description))
-                                    {
-                                        <span>@project.Description</span>
-                                    }
-                                    else
-                                    {
-                                        <em class="text-muted">No description</em>
-                                    }
-                                </td>
-                                <td>
-                                    <span class="badge bg-secondary">@project.Visibility</span>
-                                </td>
-                                <td>
-                                    @project.LastUpdateTime.ToString("MMM dd, yyyy")
-                                </td>
-                                <td>
-                                    <span class="badge bg-info">@project.Repositories.Count repo@(project.Repositories.Count != 1 ? "s" : "")</span>
-                                </td>
-                                <td>
-                                    <a href="@Url.Action("Configure", "ProjectClone", new { projectId = project.Id })" 
-                                       class="btn btn-success btn-sm">
-                                        <i class="bi bi-copy"></i> Clone Project
-                                    </a>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        </div>
+    <!-- Projects table container -->
+    <div id="projectsContainer">
+        @await Html.PartialAsync("_ProjectsTable", Model)
     </div>
 }
 
 @section Scripts {
     <script>
-        // Initialize project count display on page load
+        let searchTimeout;
+        let currentSearchQuery = '@Model.SearchQuery';
+
+        // Initialize page
         document.addEventListener('DOMContentLoaded', function() {
-            updateProjectCount();
-        });
-
-        function filterProjects() {
-            const searchTerm = document.getElementById('projectSearch').value.trim();
-            const rows = document.querySelectorAll('tbody tr');
-            let visibleCount = 0;
-
-            if (searchTerm === '') {
-                // Show all rows if search is empty
-                rows.forEach(row => {
-                    row.style.display = '';
-                    visibleCount++;
+            const searchInput = document.getElementById('projectSearch');
+            if (searchInput) {
+                searchInput.addEventListener('input', function() {
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(performSearch, 500); // Debounce search
                 });
-            } else {
-                // Convert search term to regex pattern for wildcard matching
-                const pattern = searchTerm
-                    .replace(/\*/g, '.*')  // Replace * with .*
-                    .replace(/\?/g, '.')   // Replace ? with .
-                    .toLowerCase();
                 
-                const regex = new RegExp('^' + pattern + '$', 'i');
-
-                rows.forEach(row => {
-                    const projectNameCell = row.querySelector('td:first-child strong');
-                    if (projectNameCell) {
-                        const projectName = projectNameCell.textContent.trim();
-                        
-                        // Check if project name matches the pattern
-                        if (regex.test(projectName.toLowerCase()) || projectName.toLowerCase().includes(searchTerm.toLowerCase())) {
-                            row.style.display = '';
-                            visibleCount++;
-                        } else {
-                            row.style.display = 'none';
-                        }
+                searchInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        clearTimeout(searchTimeout);
+                        performSearch();
                     }
                 });
             }
+        });
 
-            updateProjectCount(visibleCount, rows.length);
+        function performSearch() {
+            const searchQuery = document.getElementById('projectSearch').value;
+            currentSearchQuery = searchQuery;
+            loadPage(1, searchQuery);
         }
 
         function clearSearch() {
             document.getElementById('projectSearch').value = '';
-            filterProjects();
+            currentSearchQuery = '';
+            loadPage(1, '');
             document.getElementById('projectSearch').focus();
         }
 
-        function updateProjectCount(visible = null, total = null) {
-            const countElement = document.getElementById('projectCount');
+        function loadPage(page, searchQuery = null) {
+            if (searchQuery === null) {
+                searchQuery = currentSearchQuery;
+            }
             
-            if (visible === null || total === null) {
-                const allRows = document.querySelectorAll('tbody tr');
-                total = allRows.length;
-                visible = Array.from(allRows).filter(row => row.style.display !== 'none').length;
+            // Show loading indicator
+            const container = document.getElementById('projectsContainer');
+            if (container) {
+                container.innerHTML = '<div class="text-center py-4"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
             }
 
-            if (visible === total) {
-                countElement.textContent = `Showing ${total} project${total !== 1 ? 's' : ''}`;
-            } else {
-                countElement.textContent = `Showing ${visible} of ${total} projects`;
+            // Build URL with parameters
+            const url = new URL('/Home/SearchProjects', window.location.origin);
+            url.searchParams.append('page', page);
+            if (searchQuery) {
+                url.searchParams.append('search', searchQuery);
             }
+
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.text();
+                })
+                .then(html => {
+                    if (container) {
+                        container.innerHTML = html;
+                    }
+                    
+                    // Update browser URL without page reload
+                    const newUrl = new URL(window.location);
+                    newUrl.searchParams.set('page', page);
+                    if (searchQuery) {
+                        newUrl.searchParams.set('search', searchQuery);
+                    } else {
+                        newUrl.searchParams.delete('search');
+                    }
+                    window.history.pushState({}, '', newUrl);
+                })
+                .catch(error => {
+                    console.error('Error loading projects:', error);
+                    if (container) {
+                        container.innerHTML = '<div class="alert alert-danger">Error loading projects. Please try again.</div>';
+                    }
+                });
         }
 
-        // Add keyboard shortcut for search (Ctrl+F or Ctrl+K)
+        // Handle browser back/forward buttons
+        window.addEventListener('popstate', function(event) {
+            location.reload();
+        });
+
+        // Add keyboard shortcuts
         document.addEventListener('keydown', function(e) {
             if ((e.ctrlKey && (e.key === 'f' || e.key === 'k')) || e.key === '/') {
                 e.preventDefault();

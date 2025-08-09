@@ -19,7 +19,30 @@ public class AdoService : IAdoService
         return Task.FromResult(true); // Simplified for testing
     }
 
+    public Task<AdoProject?> GetProjectByIdAsync(string projectId)
+    {
+        return Task.FromResult<AdoProject?>(null); // Simplified for testing
+    }
+
+    public Task<PagedResult<AdoProject>> GetProjectsPagedAsync(ProjectSearchRequest request)
+    {
+        return Task.FromResult(new PagedResult<AdoProject>
+        {
+            Items = new List<AdoProject>(),
+            CurrentPage = request.Page,
+            PageSize = request.PageSize,
+            TotalItems = 0,
+            TotalPages = 0,
+            SearchQuery = request.SearchQuery
+        });
+    }
+
     public Task<List<AdoProject>> GetProjectsAsync()
+    {
+        return Task.FromResult(new List<AdoProject>());
+    }
+
+    public Task<List<AdoProject>> GetProjectsAsync(bool includeRepositories)
     {
         return Task.FromResult(new List<AdoProject>());
     }

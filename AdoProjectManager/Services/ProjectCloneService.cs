@@ -5,6 +5,8 @@ using Microsoft.TeamFoundation.WorkItemTracking.WebApi;
 using Microsoft.TeamFoundation.WorkItemTracking.WebApi.Models;
 using Microsoft.TeamFoundation.SourceControl.WebApi;
 using Microsoft.TeamFoundation.Build.WebApi;
+using Microsoft.TeamFoundation.Wiki.WebApi;
+using Microsoft.TeamFoundation.Wiki.WebApi.Contracts;
 using Microsoft.VisualStudio.Services.WebApi;
 using Microsoft.VisualStudio.Services.Common;
 using Microsoft.VisualStudio.Services.Operations;
@@ -64,7 +66,7 @@ public class ProjectCloneService : IProjectCloneService
             {
                 progress?.Report($"Retrieved source project: {sourceProject.Name}");
                 return $"Found source project: {sourceProject.Name}";
-            }));
+            }, request.CloneOperationId));
             result.CompletedSteps++;
 
             // Step 2: Create target project
@@ -79,7 +81,7 @@ public class ProjectCloneService : IProjectCloneService
             {
                 progress?.Report($"Created new project: {request.TargetProjectName}");
                 return $"Created project with ID: {newProjectId}";
-            }));
+            }, request.CloneOperationId));
             result.CompletedSteps++;
 
             // Get connections for both source and target
@@ -96,7 +98,7 @@ public class ProjectCloneService : IProjectCloneService
                     await CloneProjectSettings(sourceConnection, targetConnection, request.SourceProjectId, newProjectId);
                     progress?.Report("✅ Project settings and service visibility configured");
                     return "Project settings and Azure DevOps service ON/OFF states cloned successfully";
-                }));
+                }, request.CloneOperationId));
                 result.CompletedSteps++;
             }
 
@@ -109,7 +111,7 @@ public class ProjectCloneService : IProjectCloneService
                     await CloneClassificationNodes(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, request.Options);
                     progress?.Report("✅ Work item structure (areas/iterations) configured");
                     return "Classification nodes (area/iteration paths) cloned successfully";
-                }));
+                }, request.CloneOperationId));
                 result.CompletedSteps++;
             }
 
@@ -122,7 +124,7 @@ public class ProjectCloneService : IProjectCloneService
                     var repoCount = await CloneRepositories(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, request.Options, progress);
                     progress?.Report($"✅ Successfully cloned {repoCount} Git repositories");
                     return $"Cloned {repoCount} Git repositories with full history and branches";
-                }));
+                }, request.CloneOperationId));
                 result.CompletedSteps++;
             }
 
@@ -135,7 +137,7 @@ public class ProjectCloneService : IProjectCloneService
                     var wiCount = await CloneWorkItems(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, request.Options, progress);
                     progress?.Report($"✅ Successfully cloned {wiCount} work items with relationships");
                     return $"Cloned {wiCount} work items (stories, tasks, bugs) with links and attachments";
-                }));
+                }, request.CloneOperationId));
                 result.CompletedSteps++;
             }
 
@@ -148,7 +150,7 @@ public class ProjectCloneService : IProjectCloneService
                     var pipelineCount = await CloneBuildPipelines(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, progress);
                     progress?.Report($"✅ Successfully cloned {pipelineCount} CI/CD pipelines");
                     return $"Cloned {pipelineCount} build and release pipelines with triggers and variables";
-                }));
+                }, request.CloneOperationId));
                 result.CompletedSteps++;
             }
 
@@ -161,7 +163,7 @@ public class ProjectCloneService : IProjectCloneService
                     var queryCount = await CloneQueries(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, progress);
                     progress?.Report($"✅ Successfully cloned {queryCount} work item queries");
                     return $"Cloned {queryCount} saved queries and query folders";
-                }));
+                }, request.CloneOperationId));
                 result.CompletedSteps++;
             }
 
@@ -174,20 +176,20 @@ public class ProjectCloneService : IProjectCloneService
                     var dashboardCount = await CloneDashboards(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, progress);
                     progress?.Report($"✅ Successfully cloned {dashboardCount} project dashboards");
                     return $"Cloned {dashboardCount} dashboards with widgets and configurations";
-                }));
+                }, request.CloneOperationId));
                 result.CompletedSteps++;
             }
 
-            // Step 10: Clone teams and permissions
-            if (request.Options.CloneTeams)
+            // Step 10: Clone wiki
+            if (request.Options.CloneWiki)
             {
-                result.Steps.Add(await ExecuteStep("Clone Teams & Permissions", async () =>
+                result.Steps.Add(await ExecuteStep("Clone Project Wiki", async () =>
                 {
-                    progress?.Report("👥 Starting teams and permissions cloning...");
-                    var teamCount = await CloneTeamsAndPermissions(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, progress);
-                    progress?.Report($"✅ Successfully cloned {teamCount} teams with permissions");
-                    return $"Cloned {teamCount} teams with member assignments and permissions";
-                }));
+                    progress?.Report("📚 Starting project wiki cloning...");
+                    var wikiPageCount = await CloneWiki(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, progress);
+                    progress?.Report($"✅ Successfully cloned wiki with {wikiPageCount} pages");
+                    return $"Cloned wiki with {wikiPageCount} pages and content";
+                }, request.CloneOperationId));
                 result.CompletedSteps++;
             }
 
@@ -200,20 +202,7 @@ public class ProjectCloneService : IProjectCloneService
                     await ApplyTeamConfiguration(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, progress);
                     progress?.Report("✅ Team configuration settings applied");
                     return "Team configuration settings (backlogs, sprints, working days) applied successfully";
-                }));
-                result.CompletedSteps++;
-            }
-
-            // Step 12: Clone project administrators and security groups
-            if (request.Options.CloneTeams)
-            {
-                result.Steps.Add(await ExecuteStep("Configure Project Administrators", async () =>
-                {
-                    progress?.Report("🛡️ Configuring project administrators and security groups...");
-                    var adminCount = await CloneProjectAdministrators(sourceConnection, targetConnection, request.SourceProjectId, newProjectId, progress);
-                    progress?.Report($"✅ Successfully configured {adminCount} project administrators and security groups");
-                    return $"Configured {adminCount} project administrators, contributors, and security group memberships";
-                }));
+                }, request.CloneOperationId));
                 result.CompletedSteps++;
             }
 
@@ -256,7 +245,7 @@ public class ProjectCloneService : IProjectCloneService
         return result;
     }
 
-    private async Task<CloneStepResult> ExecuteStep(string stepName, Func<Task<string>> stepAction)
+    private async Task<CloneStepResult> ExecuteStep(string stepName, Func<Task<string>> stepAction, string? cloneOperationId = null)
     {
         var stepResult = new CloneStepResult
         {
@@ -269,8 +258,11 @@ public class ProjectCloneService : IProjectCloneService
         try
         {
             _logger.LogInformation("🔄 Executing step: {StepName}", stepName);
+            
             stepResult.Message = await stepAction();
             stepResult.Success = true;
+            
+            _logger.LogInformation("✅ Completed: {StepName} - {Message}", stepName, stepResult.Message);
         }
         catch (Exception ex)
         {
@@ -300,7 +292,7 @@ public class ProjectCloneService : IProjectCloneService
         if (options.CloneBuildPipelines) steps++;
         if (options.CloneQueries) steps++;
         if (options.CloneDashboards) steps++;
-        if (options.CloneTeams) steps++;
+        if (options.CloneWiki) steps++;
         if (options.CloneProjectSettings) steps++; // Team configuration
         
         return steps;
@@ -308,9 +300,8 @@ public class ProjectCloneService : IProjectCloneService
 
     private async Task<AdoProject?> GetSourceProjectDetails(string projectId)
     {
-        // Use existing AdoService to get project details
-        var projects = await _adoService.GetProjectsAsync();
-        return projects.FirstOrDefault(p => p.Id == projectId || p.Name == projectId);
+        // Use optimized method to get single project details instead of loading all projects
+        return await _adoService.GetProjectByIdAsync(projectId);
     }
 
     private async Task<string> CreateTargetProject(ProjectCloneRequest request, AdoProject sourceProject)
@@ -2043,35 +2034,211 @@ public class ProjectCloneService : IProjectCloneService
             var sourceWitClient = sourceConn.GetClient<WorkItemTrackingHttpClient>();
             var targetWitClient = targetConn.GetClient<WorkItemTrackingHttpClient>();
 
-            // Get all queries from source project
+            // Get all queries from source project with maximum supported depth
             var queryHierarchy = await sourceWitClient.GetQueriesAsync(sourceProjectId, QueryExpand.All, depth: 2);
             
             var clonedCount = 0;
+            _logger.LogInformation("🔍 Found {QueryCount} top-level query items to process", queryHierarchy.Count());
 
-            foreach (var queryItem in queryHierarchy)
+            // Focus ONLY on the "Shared Queries" folder
+            var sharedQueriesFolder = queryHierarchy.FirstOrDefault(q => q.Name.Equals("Shared Queries", StringComparison.OrdinalIgnoreCase));
+            if (sharedQueriesFolder != null)
             {
-                if (queryItem is QueryHierarchyItem folder && folder.IsFolder == true)
+                _logger.LogInformation("📁 Found Shared Queries folder, processing contents...");
+                _logger.LogInformation("🔍 Shared Queries details: IsFolder={IsFolder}, HasChildren={HasChildren}, ChildCount={ChildCount}", 
+                    sharedQueriesFolder.IsFolder, sharedQueriesFolder.Children != null, sharedQueriesFolder.Children?.Count() ?? 0);
+                
+                progress?.Report("📁 Processing Shared Queries folder...");
+                
+                var sharedQueriesCloned = await ProcessSharedQueriesFolderOnly(targetWitClient, targetProjectId, sharedQueriesFolder, progress);
+                clonedCount += sharedQueriesCloned;
+                _logger.LogInformation("✅ Cloned {Count} items from Shared Queries", sharedQueriesCloned);
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ No 'Shared Queries' folder found in source project");
+                
+                // Log all available folders for debugging
+                foreach (var item in queryHierarchy)
                 {
-                    progress?.Report($"Cloning query folder: {folder.Name}");
-                    await CloneQueryFolder(targetWitClient, targetProjectId, folder, null, progress);
-                    clonedCount++;
-                }
-                else if (queryItem is QueryHierarchyItem query && query.IsFolder == false)
-                {
-                    progress?.Report($"Cloning query: {query.Name}");
-                    await CloneQuery(targetWitClient, targetProjectId, query, null);
-                    clonedCount++;
+                    _logger.LogInformation("� Available folder: {FolderName}, IsFolder: {IsFolder}", item.Name, item.IsFolder);
                 }
             }
 
+            _logger.LogInformation("✅ Query cloning completed. Total items successfully processed: {ClonedCount}", clonedCount);
+            
+            if (clonedCount > 0)
+            {
+                _logger.LogInformation("🎉 Successfully cloned {ClonedCount} queries to the target project", clonedCount);
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ No queries were successfully cloned. This may be due to:");
+                _logger.LogWarning("   • Permission issues (check Azure DevOps project permissions)");
+                _logger.LogWarning("   • No queries found in Shared Queries folder");
+                _logger.LogWarning("   • Network connectivity issues");
+                _logger.LogInformation("💡 Check the logs above for specific error details");
+            }
+            
             return clonedCount;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error cloning queries from project {SourceProject} to {TargetProject}", sourceProjectId, targetProjectId);
-            progress?.Report($"Error cloning queries: {ex.Message}");
+            _logger.LogError(ex, "❌ Error cloning queries from project {SourceProject} to {TargetProject}", sourceProjectId, targetProjectId);
+            progress?.Report($"❌ Error cloning queries: {ex.Message}");
             return 0;
         }
+    }
+
+    private async Task<int> ProcessSharedQueriesFolderOnly(WorkItemTrackingHttpClient client, string projectId, QueryHierarchyItem sharedFolder, IProgress<string>? progress)
+    {
+        var clonedCount = 0;
+        
+        if (sharedFolder.Children == null || !sharedFolder.Children.Any())
+        {
+            _logger.LogInformation("📂 Shared Queries folder is empty");
+            return 0;
+        }
+
+        _logger.LogInformation("📂 Processing {ChildCount} items in Shared Queries", sharedFolder.Children.Count());
+        
+        // Process all items recursively
+        clonedCount = await ProcessQueryHierarchyRecursively(client, projectId, sharedFolder.Children, "Shared Queries", progress);
+        
+        return clonedCount;
+    }
+
+    private async Task<int> ProcessQueryHierarchyRecursively(WorkItemTrackingHttpClient client, string projectId, 
+        IEnumerable<QueryHierarchyItem> items, string parentPath, IProgress<string>? progress)
+    {
+        var clonedCount = 0;
+        
+        foreach (var item in items)
+        {
+            _logger.LogInformation("🔍 Examining item: '{ItemName}' in path '{ParentPath}', IsFolder: {IsFolder}, HasWiql: {HasWiql}, WiqlLength: {WiqlLength}", 
+                item.Name, parentPath, item.IsFolder, !string.IsNullOrEmpty(item.Wiql), item.Wiql?.Length ?? 0);
+
+            // Log the first part of WIQL if it exists
+            if (!string.IsNullOrEmpty(item.Wiql))
+            {
+                var wiqlPreview = item.Wiql.Length > 50 ? item.Wiql.Substring(0, 50) + "..." : item.Wiql;
+                _logger.LogInformation("📝 WIQL Preview: {WiqlPreview}", wiqlPreview);
+            }
+
+            // Check if this is a query (not a folder) by checking for WIQL content and IsFolder not being true
+            if (item.IsFolder != true && !string.IsNullOrEmpty(item.Wiql))
+            {
+                // This is an actual query - clone it to the current path
+                _logger.LogInformation("📝 Attempting to clone query: '{QueryName}' to path '{ParentPath}' with WIQL length: {WiqlLength}", item.Name, parentPath, item.Wiql.Length);
+                progress?.Report($"📝 Cloning query: {item.Name} to {parentPath}");
+                
+                // Create the query object - declare outside try blocks so it can be reused
+                var newQuery = new QueryHierarchyItem
+                {
+                    Name = item.Name,
+                    Wiql = item.Wiql,
+                    IsPublic = item.IsPublic,
+                    IsFolder = false
+                };
+
+                try
+                {
+                    _logger.LogInformation("🎯 Creating query with API call: CreateQueryAsync(query, projectId: {ProjectId}, parentPath: '{ParentPath}')", projectId, parentPath);
+                    await client.CreateQueryAsync(newQuery, projectId, parentPath);
+                    _logger.LogInformation("✅ Successfully created query: '{QueryName}' in '{ParentPath}'", item.Name, parentPath);
+                    clonedCount++;
+                }
+                catch (Exception ex)
+                {
+                    if (ex.Message.Contains("TF401256") || ex.Message.Contains("Write permissions"))
+                    {
+                        _logger.LogWarning("⚠️ Permission denied for query: '{QueryName}' in '{ParentPath}'. This may be due to Azure DevOps permissions. Attempting alternative approach...", item.Name, parentPath);
+                        
+                        // Try creating with different approach - sometimes permission issues are temporary
+                        try
+                        {
+                            await Task.Delay(1000); // Brief delay
+                            _logger.LogInformation("🔄 Retrying query creation for: '{QueryName}' in '{ParentPath}'", item.Name, parentPath);
+                            await client.CreateQueryAsync(newQuery, projectId, parentPath);
+                            _logger.LogInformation("✅ Successfully created query on retry: '{QueryName}' in '{ParentPath}'", item.Name, parentPath);
+                            clonedCount++;
+                        }
+                        catch (Exception retryEx)
+                        {
+                            _logger.LogError("❌ Failed to create query '{QueryName}' in '{ParentPath}' even after retry. This may require manual creation or higher permissions. Error: {ErrorMessage}", item.Name, parentPath, retryEx.Message);
+                            _logger.LogInformation("📋 Manual Query Creation Required:");
+                            _logger.LogInformation("   Query Name: {QueryName}", item.Name);
+                            _logger.LogInformation("   Path: {ParentPath}", parentPath);
+                            _logger.LogInformation("   WIQL: {Wiql}", item.Wiql);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogError(ex, "❌ Failed to create query: '{QueryName}' in '{ParentPath}'. Error: {ErrorMessage}", item.Name, parentPath, ex.Message);
+                    }
+                }
+            }
+            else if (item.IsFolder == true)
+            {
+                // This is a subfolder - create it and process its contents recursively
+                _logger.LogInformation("🗂️ Attempting to create subfolder: '{FolderName}' in path '{ParentPath}'", item.Name, parentPath);
+                progress?.Report($"🗂️ Creating subfolder: {item.Name} in {parentPath}");
+                
+                try
+                {
+                    // Try to create the subfolder
+                    var newFolder = new QueryHierarchyItem
+                    {
+                        Name = item.Name,
+                        IsFolder = true,
+                        IsPublic = item.IsPublic
+                    };
+
+                    _logger.LogInformation("🎯 Creating folder with API call: CreateQueryAsync(folder, projectId: {ProjectId}, parentPath: '{ParentPath}')", projectId, parentPath);
+                    await client.CreateQueryAsync(newFolder, projectId, parentPath);
+                    _logger.LogInformation("✅ Created subfolder: '{FolderName}' in '{ParentPath}'", item.Name, parentPath);
+                    
+                    // Now process the contents of this subfolder recursively
+                    if (item.Children != null && item.Children.Any())
+                    {
+                        var newFolderPath = $"{parentPath}/{item.Name}";
+                        _logger.LogInformation("� Recursively processing {SubChildCount} items in subfolder '{FolderName}' (path: '{NewFolderPath}')", item.Children.Count(), item.Name, newFolderPath);
+                        
+                        var subClonedCount = await ProcessQueryHierarchyRecursively(client, projectId, item.Children, newFolderPath, progress);
+                        clonedCount += subClonedCount;
+                        _logger.LogInformation("✅ Completed processing subfolder '{FolderName}': {SubClonedCount} items cloned", item.Name, subClonedCount);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("📂 Subfolder '{FolderName}' has no children", item.Name);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ Failed to create subfolder: '{FolderName}' in '{ParentPath}'. Error: {ErrorMessage}", item.Name, parentPath, ex.Message);
+                }
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(item.Wiql))
+                {
+                    _logger.LogWarning("⚠️ Skipping item '{ItemName}' in '{ParentPath}' - no WIQL content (IsFolder: {IsFolder})", item.Name, parentPath, item.IsFolder);
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ Skipping item '{ItemName}' in '{ParentPath}' - appears to be a folder (IsFolder: {IsFolder})", item.Name, parentPath, item.IsFolder);
+                }
+            }
+        }
+
+        return clonedCount;
+    }
+
+    private bool IsSystemQueryFolder(string folderName)
+    {
+        // System folders that exist by default in Azure DevOps projects
+        var systemFolders = new[] { "Shared Queries", "My Queries" };
+        return systemFolders.Contains(folderName, StringComparer.OrdinalIgnoreCase);
     }
 
     private async Task CloneQueryFolder(WorkItemTrackingHttpClient client, string projectId, QueryHierarchyItem sourceFolder, string? parentPath, IProgress<string>? progress)
@@ -2079,6 +2246,9 @@ public class ProjectCloneService : IProjectCloneService
         try
         {
             var folderPath = parentPath == null ? sourceFolder.Name : $"{parentPath}/{sourceFolder.Name}";
+            _logger.LogInformation("🗂️ Attempting to create query folder: {FolderName} in parent path: {ParentPath}", sourceFolder.Name, parentPath ?? "root");
+            _logger.LogInformation("🔍 Folder details: IsPublic={IsPublic}, HasChildren={HasChildren}, ChildCount={ChildCount}", 
+                sourceFolder.IsPublic, sourceFolder.Children != null, sourceFolder.Children?.Count() ?? 0);
             
             var newFolder = new QueryHierarchyItem
             {
@@ -2087,28 +2257,64 @@ public class ProjectCloneService : IProjectCloneService
                 IsPublic = sourceFolder.IsPublic
             };
 
-            await client.CreateQueryAsync(newFolder, projectId, parentPath);
-            
-            // Clone child items
-            if (sourceFolder.Children != null)
+            // Try to create the folder
+            bool folderCreated = false;
+            try
             {
+                await client.CreateQueryAsync(newFolder, projectId, parentPath);
+                _logger.LogInformation("✅ Created query folder: {FolderName} in path: {ParentPath}", sourceFolder.Name, parentPath ?? "root");
+                progress?.Report($"✅ Created query folder: {sourceFolder.Name}");
+                folderCreated = true;
+            }
+            catch (Exception ex) when (ex.Message.Contains("already exists") || ex.Message.Contains("Method Not Allowed") || ex.Message.Contains("Bad Request"))
+            {
+                // Folder might already exist, continue with cloning contents
+                _logger.LogInformation("⚠️ Folder {FolderName} in path {ParentPath} already exists or cannot be created, proceeding with contents...", sourceFolder.Name, parentPath ?? "root");
+                progress?.Report($"⚠️ Folder {sourceFolder.Name} already exists, cloning contents...");
+                folderCreated = true; // Assume it exists and we can proceed
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Failed to create query folder: {FolderName} in path: {ParentPath}", sourceFolder.Name, parentPath ?? "root");
+                progress?.Report($"❌ Failed to create folder: {sourceFolder.Name} - {ex.Message}");
+                return; // Don't proceed if we can't create or verify the folder
+            }
+            
+            // Clone child items only if folder was created or already exists
+            if (folderCreated && sourceFolder.Children != null)
+            {
+                _logger.LogInformation("📂 Processing {ChildCount} children in folder: {FolderName}", sourceFolder.Children.Count(), sourceFolder.Name);
                 foreach (var child in sourceFolder.Children)
                 {
-                    if (child.IsFolder == true)
+                    // Log detailed information about each child
+                    _logger.LogInformation("🔍 Child details: Name={ChildName}, IsFolder={IsFolder}, HasWiql={HasWiql}, WiqlLength={WiqlLength}", 
+                        child.Name, child.IsFolder, !string.IsNullOrEmpty(child.Wiql), child.Wiql?.Length ?? 0);
+                    
+                    if (child.IsFolder == false && !string.IsNullOrEmpty(child.Wiql))
                     {
+                        _logger.LogInformation("� Processing actual query: {QueryName} in folder {FolderName}", child.Name, sourceFolder.Name);
+                        await CloneQuery(client, projectId, child, folderPath);
+                    }
+                    else if (child.IsFolder == true)
+                    {
+                        _logger.LogInformation("�️ Processing subfolder: {SubFolderName} in {FolderName}", child.Name, sourceFolder.Name);
                         await CloneQueryFolder(client, projectId, child, folderPath, progress);
                     }
                     else
                     {
-                        await CloneQuery(client, projectId, child, folderPath);
+                        _logger.LogWarning("⚠️ Skipping item {ItemName} in {FolderName} - no WIQL content and not a folder", child.Name, sourceFolder.Name);
                     }
                 }
+            }
+            else if (folderCreated)
+            {
+                _logger.LogInformation("📂 Folder {FolderName} has no children to process", sourceFolder.Name);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to clone query folder: {FolderName}", sourceFolder.Name);
-            progress?.Report($"Failed to clone query folder: {sourceFolder.Name}");
+            _logger.LogError(ex, "❌ Failed to clone query folder: {FolderName} in path: {ParentPath}", sourceFolder.Name, parentPath ?? "root");
+            progress?.Report($"❌ Failed to clone query folder: {sourceFolder.Name} - {ex.Message}");
         }
     }
 
@@ -2116,6 +2322,16 @@ public class ProjectCloneService : IProjectCloneService
     {
         try
         {
+            _logger.LogInformation("🎯 Creating query: {QueryName} in path: {ParentPath}", sourceQuery.Name, parentPath ?? "root");
+            _logger.LogInformation("🔍 Query details: IsPublic={IsPublic}, HasWiql={HasWiql}, WiqlLength={WiqlLength}", 
+                sourceQuery.IsPublic, !string.IsNullOrEmpty(sourceQuery.Wiql), sourceQuery.Wiql?.Length ?? 0);
+            
+            if (string.IsNullOrEmpty(sourceQuery.Wiql))
+            {
+                _logger.LogWarning("⚠️ Query {QueryName} has no WIQL content - skipping", sourceQuery.Name);
+                return;
+            }
+            
             var newQuery = new QueryHierarchyItem
             {
                 Name = sourceQuery.Name,
@@ -2125,10 +2341,12 @@ public class ProjectCloneService : IProjectCloneService
             };
 
             await client.CreateQueryAsync(newQuery, projectId, parentPath);
+            _logger.LogInformation("✅ Successfully created query: {QueryName} in path: {ParentPath}", sourceQuery.Name, parentPath ?? "root");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to clone query: {QueryName}", sourceQuery.Name);
+            _logger.LogError(ex, "❌ Failed to create query: {QueryName} in path: {ParentPath}. Error: {ErrorMessage}", sourceQuery.Name, parentPath ?? "root", ex.Message);
+            // Continue with other queries even if one fails
         }
     }
 
@@ -2153,6 +2371,208 @@ public class ProjectCloneService : IProjectCloneService
             progress?.Report($"Failed to clone dashboards: {ex.Message}");
             return 0;
         }
+    }
+
+    private async Task<int> CloneWiki(VssConnection sourceConn, VssConnection targetConn, string sourceProjectId, string targetProjectId, IProgress<string>? progress)
+    {
+        try
+        {
+            _logger.LogInformation("📚 Starting wiki cloning from project {SourceProjectId} to {TargetProjectId}", sourceProjectId, targetProjectId);
+            
+            // Get the Wiki HTTP client
+            var sourceWikiClient = sourceConn.GetClient<WikiHttpClient>();
+            var targetWikiClient = targetConn.GetClient<WikiHttpClient>();
+            
+            // Get all wikis from the source project
+            var sourceWikis = await sourceWikiClient.GetWikisAsync(sourceProjectId);
+            progress?.Report($"Found {sourceWikis.Count} wiki(s) in source project");
+            
+            if (sourceWikis.Count == 0)
+            {
+                progress?.Report("No wikis found in source project");
+                return 0;
+            }
+            
+            int totalPagesCloned = 0;
+            
+            foreach (var sourceWiki in sourceWikis)
+            {
+                try
+                {
+                    progress?.Report($"📖 Processing wiki: {sourceWiki.Name}");
+                    
+                    // Only clone project wikis (not code wikis which are linked to repositories)
+                    if (sourceWiki.ProjectId != Guid.Empty)
+                    {
+                        // Create the wiki in the target project
+                        var targetWiki = new WikiCreateParametersV2
+                        {
+                            Name = sourceWiki.Name ?? "Cloned Wiki",
+                            ProjectId = new Guid(targetProjectId)
+                        };
+                        
+                        var createdWiki = await targetWikiClient.CreateWikiAsync(targetWiki, targetProjectId);
+                        progress?.Report($"✅ Created wiki: {createdWiki.Name}");
+                        
+                        // Try to get the root page and all its content
+                        try
+                        {
+                            var rootPage = await sourceWikiClient.GetPageAsync(
+                                sourceProjectId,
+                                sourceWiki.Id.ToString(),
+                                path: null,
+                                recursionLevel: VersionControlRecursionType.Full,
+                                includeContent: true);
+                            
+                            if (rootPage != null)
+                            {
+                                _logger.LogInformation("📋 Root page loaded for wiki {WikiName}. Has content: {HasContent}, Path: {Path}", 
+                                    sourceWiki.Name, !string.IsNullOrEmpty(rootPage.Page?.Content), rootPage.Page?.Path ?? "null");
+                                
+                                if (rootPage.Page?.SubPages != null)
+                                {
+                                    _logger.LogInformation("🔍 Found {SubPageCount} subpages in root page", rootPage.Page.SubPages.Count());
+                                    foreach (var subPage in rootPage.Page.SubPages)
+                                    {
+                                        _logger.LogInformation("  📄 Subpage: {Path}", subPage.Path);
+                                    }
+                                }
+                                else
+                                {
+                                    _logger.LogInformation("ℹ️ No subpages found in root page");
+                                }
+                                
+                                totalPagesCloned += await CloneWikiPagesRecursive(sourceWikiClient, targetWikiClient, 
+                                    sourceProjectId, targetProjectId, 
+                                    sourceWiki.Id.ToString(), createdWiki.Id.ToString(), 
+                                    rootPage, progress);
+                            }
+                        }
+                        catch (Exception pageEx)
+                        {
+                            _logger.LogWarning(pageEx, "⚠️ Could not access wiki pages for {WikiName}: {ErrorMessage}", sourceWiki.Name, pageEx.Message);
+                            progress?.Report($"⚠️ Could not access pages for wiki {sourceWiki.Name}");
+                        }
+                    }
+                    else
+                    {
+                        progress?.Report($"📂 Skipping code wiki: {sourceWiki.Name} (linked to repository)");
+                        _logger.LogInformation("Code wiki {WikiName} skipped - these are linked to repositories", sourceWiki.Name);
+                    }
+                }
+                catch (Exception wikiEx)
+                {
+                    _logger.LogWarning(wikiEx, "⚠️ Failed to clone wiki {WikiName}: {ErrorMessage}", sourceWiki.Name, wikiEx.Message);
+                    progress?.Report($"⚠️ Failed to clone wiki {sourceWiki.Name}: {wikiEx.Message}");
+                }
+            }
+            
+            _logger.LogInformation("✅ Wiki cloning completed. Cloned {PageCount} pages", totalPagesCloned);
+            return totalPagesCloned;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ Failed to clone wiki from project {SourceProjectId}: {ErrorMessage}", sourceProjectId, ex.Message);
+            progress?.Report($"Failed to clone wiki: {ex.Message}");
+            return 0;
+        }
+    }
+
+    private async Task<int> CloneWikiPagesRecursive(WikiHttpClient sourceClient, WikiHttpClient targetClient,
+        string sourceProjectId, string targetProjectId,
+        string sourceWikiId, string targetWikiId,
+        WikiPageResponse parentPage, IProgress<string>? progress)
+    {
+        int pagesCloned = 0;
+        
+        try
+        {
+            // Clone the current page if it has a valid path (content is optional for placeholder pages)
+            if (!string.IsNullOrEmpty(parentPage.Page?.Path))
+            {
+                try
+                {
+                    var pageParams = new WikiPageCreateOrUpdateParameters
+                    {
+                        Content = parentPage.Page.Content ?? "" // Use empty string if no content
+                    };
+                    
+                    // Use the correct overload with required Version parameter (null for new pages)
+                    await targetClient.CreateOrUpdatePageAsync(
+                        pageParams,
+                        targetProjectId,
+                        new Guid(targetWikiId),
+                        parentPage.Page.Path,
+                        Version: null); // null for creating new pages
+                    
+                    pagesCloned++;
+                    var contentStatus = string.IsNullOrEmpty(parentPage.Page.Content) ? "(placeholder)" : $"({parentPage.Page.Content.Length} chars)";
+                    progress?.Report($"📄 Cloned page: {parentPage.Page.Path} {contentStatus}");
+                    _logger.LogInformation("📄 Cloned page: {PagePath} {ContentStatus}", parentPage.Page.Path, contentStatus);
+                }
+                catch (Exception pageEx)
+                {
+                    _logger.LogWarning(pageEx, "⚠️ Failed to clone page {PagePath}: {ErrorMessage}", parentPage.Page.Path, pageEx.Message);
+                    progress?.Report($"⚠️ Skipped page {parentPage.Page.Path}: {pageEx.Message}");
+                }
+            }
+            
+            // Recursively clone child pages
+            if (parentPage.Page?.SubPages != null)
+            {
+                _logger.LogInformation("🔍 Processing {SubPageCount} subpages for parent page: {ParentPath}", 
+                    parentPage.Page.SubPages.Count(), parentPage.Page.Path ?? "root");
+                    
+                foreach (var subPage in parentPage.Page.SubPages)
+                {
+                    try
+                    {
+                        _logger.LogInformation("📥 Fetching subpage: {SubPagePath}", subPage.Path);
+                        
+                        // Get the full content for each subpage
+                        var fullSubPage = await sourceClient.GetPageAsync(
+                            sourceProjectId,
+                            sourceWikiId,
+                            subPage.Path,
+                            recursionLevel: VersionControlRecursionType.OneLevel,
+                            includeContent: true);
+                            
+                        if (fullSubPage != null)
+                        {
+                            var hasContent = !string.IsNullOrEmpty(fullSubPage.Page?.Content);
+                            var contentLength = fullSubPage.Page?.Content?.Length ?? 0;
+                            _logger.LogInformation("✅ Subpage loaded: {SubPagePath}, Has content: {HasContent} ({ContentLength} chars)", 
+                                subPage.Path, hasContent, contentLength);
+                            
+                            pagesCloned += await CloneWikiPagesRecursive(sourceClient, targetClient, 
+                                sourceProjectId, targetProjectId, 
+                                sourceWikiId, targetWikiId, 
+                                fullSubPage, progress);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("⚠️ Failed to load subpage: {SubPagePath} - returned null", subPage.Path);
+                        }
+                    }
+                    catch (Exception subPageEx)
+                    {
+                        _logger.LogWarning(subPageEx, "⚠️ Failed to clone sub-page {PagePath}: {ErrorMessage}", subPage.Path, subPageEx.Message);
+                        progress?.Report($"⚠️ Skipped sub-page {subPage.Path}");
+                    }
+                }
+            }
+            else
+            {
+                _logger.LogInformation("ℹ️ No subpages found for page: {PagePath}", parentPage.Page?.Path ?? "unknown");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "⚠️ Failed to clone wiki page {PagePath}: {ErrorMessage}", parentPage.Page?.Path, ex.Message);
+            progress?.Report($"⚠️ Skipped page {parentPage.Page?.Path}: {ex.Message}");
+        }
+        
+        return pagesCloned;
     }
 
     private async Task<int> CloneTeamsAndPermissions(VssConnection sourceConn, VssConnection targetConn, string sourceProjectId, string targetProjectId, IProgress<string>? progress)
@@ -2484,14 +2904,16 @@ public class ProjectCloneService : IProjectCloneService
             
             _logger.LogInformation("✅ Target organization matches source organization - cloning within same organization allowed");
             
+            // Instead of getting all projects (expensive), just test the connection with a simple API call
             var connection = await GetConnection(organizationUrl, pat);
             _logger.LogInformation("🔍 Connection created successfully");
             
             var projectClient = connection.GetClient<ProjectHttpClient>();
             _logger.LogInformation("🔍 ProjectClient obtained");
             
-            var projects = await projectClient.GetProjects();
-            _logger.LogInformation("🔍 Successfully retrieved {ProjectCount} projects from target organization", projects.Count);
+            // Use a lightweight call to test connectivity - just get the first project (top=1)
+            var projects = await projectClient.GetProjects(top: 1);
+            _logger.LogInformation("🔍 Successfully validated connection to target organization. Sample projects retrieved: {ProjectCount}", projects.Count);
             
             return true;
         }

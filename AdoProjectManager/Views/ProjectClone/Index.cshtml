@@ -1,4 +1,4 @@
-@model List<AdoProjectManager.Models.AdoProject>
+@model AdoProjectManager.Models.PagedResult<AdoProjectManager.Models.AdoProject>
 
 @{
     ViewData["Title"] = "Clone Azure DevOps Project";
@@ -24,91 +24,84 @@
                 </div>
             }
 
-            @{
-                var projects = Model ?? new List<AdoProjectManager.Models.AdoProject>();
-            }
-
-            @if (projects != null && projects.Any())
-            {
-                <div class="card">
-                    <div class="card-header">
-                        <h5 class="mb-0">Available Projects</h5>
+            <!-- Search Bar -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="searchInput" 
+                               placeholder="Search projects... (use * for wildcards)" 
+                               value="@Model.SearchQuery">
+                        <button class="btn btn-outline-secondary" type="button" id="searchButton">
+                            <i class="fas fa-search"></i> Search
+                        </button>
                     </div>
-                    <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                    <tr>
-                                        <th>Project Name</th>
-                                        <th>Description</th>
-                                        <th>State</th>
-                                        <th>Last Updated</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach (var project in projects)
-                                    {
-                                        <tr>
-                                            <td>
-                                                <strong>@project.Name</strong>
-                                                <br>
-                                                <small class="text-muted">ID: @project.Id</small>
-                                            </td>
-                                            <td>
-                                                @if (!string.IsNullOrEmpty(project.Description))
-                                                {
-                                                    <span>@project.Description</span>
-                                                }
-                                                else
-                                                {
-                                                    <em class="text-muted">No description</em>
-                                                }
-                                            </td>
-                                            <td>
-                                                <span class="badge @(project.State == "wellFormed" ? "badge-success" : "badge-warning")">
-                                                    @project.State
-                                                </span>
-                                            </td>
-                                            <td>
-                                                @project.LastUpdateTime.ToString("MMM dd, yyyy")
-                                            </td>
-                                            <td>
-                                                <a href="@Url.Action("Configure", new { projectId = project.Id })" 
-                                                   class="btn btn-primary btn-sm">
-                                                    <i class="fas fa-cog"></i> Configure Clone
-                                                </a>
-                                            </td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                    <small class="text-muted">Examples: "Web*", "*API", "*test*"</small>
                 </div>
-            }
-            else
-            {
-                <div class="alert alert-info" role="alert">
-                    <i class="fas fa-info-circle"></i> No projects found. Please check your connection settings.
-                </div>
-            }
+            </div>
 
-            <div class="mt-3">
-                <a href="@Url.Action("Index", "Home")" class="btn btn-secondary">
-                    <i class="fas fa-arrow-left"></i> Back to Home
-                </a>
+            <div id="projectsContainer">
+                <partial name="_ProjectsCloneTable" model="Model" />
             </div>
         </div>
     </div>
 </div>
 
-@section Scripts {
-    <script>
-        // Add any JavaScript functionality here if needed
-        $(document).ready(function() {
-            // Initialize tooltips
-            $('[data-toggle="tooltip"]').tooltip();
-        });
-    </script>
-}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('searchInput');
+    const searchButton = document.getElementById('searchButton');
+    const projectsContainer = document.getElementById('projectsContainer');
+    let searchTimeout;
+
+    function performSearch(page = 1) {
+        const searchQuery = searchInput.value.trim();
+        const url = `/ProjectClone/SearchProjects?page=${page}&searchQuery=${encodeURIComponent(searchQuery)}`;
+        
+        fetch(url)
+            .then(response => response.text())
+            .then(html => {
+                projectsContainer.innerHTML = html;
+                
+                // Update URL without page reload
+                const newUrl = new URL(window.location);
+                newUrl.searchParams.set('page', page);
+                if (searchQuery) {
+                    newUrl.searchParams.set('searchQuery', searchQuery);
+                } else {
+                    newUrl.searchParams.delete('searchQuery');
+                }
+                window.history.pushState({}, '', newUrl.toString());
+            })
+            .catch(error => {
+                console.error('Search error:', error);
+                projectsContainer.innerHTML = '<div class="alert alert-danger">Error searching projects. Please try again.</div>';
+            });
+    }
+
+    // Search on button click
+    searchButton.addEventListener('click', () => performSearch(1));
+
+    // Search on Enter key
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            performSearch(1);
+        }
+    });
+
+    // Real-time search with debounce
+    searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => performSearch(1), 500);
+    });
+
+    // Handle pagination clicks (delegated event handling)
+    projectsContainer.addEventListener('click', function(e) {
+        if (e.target.matches('.page-link[data-page]')) {
+            e.preventDefault();
+            const page = parseInt(e.target.getAttribute('data-page'));
+            performSearch(page);
+        }
+    });
+});
+</script>

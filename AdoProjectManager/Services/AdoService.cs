@@ -91,11 +91,173 @@ public class AdoServiceReal : IAdoService
         }
     }
 
-    public async Task<List<AdoProject>> GetProjectsAsync()
+    private string ConvertToWebUrl(string projectName, string? apiUrl = null)
     {
         try
         {
-            _logger.LogInformation("Starting GetProjectsAsync - connecting to Azure DevOps...");
+            // Use organization URL from settings
+            var orgUrl = _settings.OrganizationUrl.TrimEnd('/');
+            
+            // Convert to web UI URL format: https://dev.azure.com/{org}/{project}
+            return $"{orgUrl}/{Uri.EscapeDataString(projectName)}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to convert to web URL for project {ProjectName}, using API URL", projectName);
+            return apiUrl ?? "";
+        }
+    }
+
+    public async Task<AdoProject?> GetProjectByIdAsync(string projectId)
+    {
+        try
+        {
+            _logger.LogInformation("Getting single project with ID: {ProjectId}", projectId);
+            using var connection = GetConnection();
+            var projectClient = connection.GetClient<ProjectHttpClient>();
+            var project = await projectClient.GetProject(projectId);
+            
+            if (project == null)
+            {
+                _logger.LogWarning("Project with ID {ProjectId} not found", projectId);
+                return null;
+            }
+
+            var adoProject = new AdoProject
+            {
+                Id = project.Id.ToString(),
+                Name = project.Name,
+                Description = project.Description ?? string.Empty,
+                Url = ConvertToWebUrl(project.Name, project.Url?.ToString()),
+                State = project.State.ToString(),
+                LastUpdateTime = project.LastUpdateTime,
+                Visibility = project.Visibility.ToString()
+            };
+
+            // Get repositories for this project
+            adoProject.Repositories = await GetRepositoriesAsync(project.Id.ToString());
+            
+            _logger.LogInformation("Successfully retrieved project: {ProjectName}", project.Name);
+            return adoProject;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting project by ID: {ProjectId}. Error: {ErrorMessage}", projectId, ex.Message);
+            return null;
+        }
+    }
+
+    public async Task<PagedResult<AdoProject>> GetProjectsPagedAsync(ProjectSearchRequest request)
+    {
+        _logger.LogInformation("🔍 GetProjectsPagedAsync called - Page: {Page}, PageSize: {PageSize}, Search: '{SearchQuery}'", 
+            request.Page, request.PageSize, request.SearchQuery);
+        
+        var result = new PagedResult<AdoProject>
+        {
+            CurrentPage = request.Page,
+            PageSize = request.PageSize,
+            SearchQuery = request.SearchQuery
+        };
+        
+        try
+        {
+            using var connection = GetConnection();
+            var projectClient = connection.GetClient<ProjectHttpClient>();
+            
+            // Get all projects
+            var allProjects = await projectClient.GetProjects();
+            _logger.LogInformation("Retrieved {ProjectCount} total projects from Azure DevOps", allProjects?.Count ?? 0);
+            
+            if (allProjects == null)
+            {
+                _logger.LogWarning("GetProjects returned null");
+                return result;
+            }
+
+            // Convert to our model and apply search filter
+            var filteredProjects = new List<AdoProject>();
+            
+            foreach (var project in allProjects)
+            {
+                // Apply search filter if provided
+                if (!string.IsNullOrEmpty(request.SearchQuery))
+                {
+                    var searchQuery = request.SearchQuery.ToLowerInvariant();
+                    var projectName = project.Name.ToLowerInvariant();
+                    var projectDescription = (project.Description ?? "").ToLowerInvariant();
+                    
+                    // Support wildcard search
+                    bool matches = false;
+                    if (searchQuery.Contains('*'))
+                    {
+                        // Convert wildcard to regex pattern
+                        var pattern = "^" + searchQuery.Replace("*", ".*") + "$";
+                        matches = System.Text.RegularExpressions.Regex.IsMatch(projectName, pattern) ||
+                                System.Text.RegularExpressions.Regex.IsMatch(projectDescription, pattern);
+                    }
+                    else
+                    {
+                        // Simple contains search
+                        matches = projectName.Contains(searchQuery) || projectDescription.Contains(searchQuery);
+                    }
+                    
+                    if (!matches) continue;
+                }
+
+                var adoProject = new AdoProject
+                {
+                    Id = project.Id.ToString(),
+                    Name = project.Name,
+                    Description = project.Description ?? string.Empty,
+                    Url = ConvertToWebUrl(project.Name, project.Url?.ToString()),
+                    State = project.State.ToString(),
+                    LastUpdateTime = project.LastUpdateTime,
+                    Visibility = project.Visibility.ToString()
+                };
+
+                // Only get repositories if requested
+                if (request.IncludeRepositories)
+                {
+                    adoProject.Repositories = await GetRepositoriesAsync(project.Id.ToString());
+                }
+                else
+                {
+                    adoProject.Repositories = new List<Models.Repository>();
+                }
+                
+                filteredProjects.Add(adoProject);
+            }
+
+            // Set total count after filtering
+            result.TotalItems = filteredProjects.Count;
+            result.TotalPages = (int)Math.Ceiling((double)result.TotalItems / request.PageSize);
+
+            // Apply pagination
+            var skip = (request.Page - 1) * request.PageSize;
+            result.Items = filteredProjects.Skip(skip).Take(request.PageSize).ToList();
+
+            _logger.LogInformation("Filtered to {FilteredCount} projects, returning page {Page} with {ItemCount} items", 
+                result.TotalItems, request.Page, result.Items.Count);
+            
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting paginated projects");
+            throw;
+        }
+    }
+
+    public async Task<List<AdoProject>> GetProjectsAsync()
+    {
+        return await GetProjectsAsync(true); // Default to including repositories for backward compatibility
+    }
+
+    public async Task<List<AdoProject>> GetProjectsAsync(bool includeRepositories)
+    {
+        try
+        {
+            _logger.LogInformation("Starting GetProjectsAsync - connecting to Azure DevOps... IncludeRepositories: {IncludeRepositories}", includeRepositories);
             using var connection = GetConnection();
             _logger.LogInformation("VssConnection created, getting ProjectHttpClient...");
             
@@ -124,20 +286,28 @@ public class AdoServiceReal : IAdoService
                     Id = project.Id.ToString(),
                     Name = project.Name,
                     Description = project.Description ?? string.Empty,
-                    Url = project.Url?.ToString() ?? string.Empty,
+                    Url = ConvertToWebUrl(project.Name, project.Url?.ToString()),
                     State = project.State.ToString(),
                     LastUpdateTime = project.LastUpdateTime,
                     Visibility = project.Visibility.ToString()
                 };
 
-                // Get repositories for this project
-                _logger.LogInformation("Getting repositories for project: {ProjectName}", project.Name);
-                adoProject.Repositories = await GetRepositoriesAsync(project.Id.ToString());
-                _logger.LogInformation("Found {RepoCount} repositories in project: {ProjectName}", adoProject.Repositories.Count, project.Name);
+                // Only get repositories if requested
+                if (includeRepositories)
+                {
+                    _logger.LogInformation("Getting repositories for project: {ProjectName}", project.Name);
+                    adoProject.Repositories = await GetRepositoriesAsync(project.Id.ToString());
+                    _logger.LogInformation("Found {RepoCount} repositories in project: {ProjectName}", adoProject.Repositories.Count, project.Name);
+                }
+                else
+                {
+                    adoProject.Repositories = new List<Models.Repository>();
+                }
+                
                 result.Add(adoProject);
             }
 
-            _logger.LogInformation("Successfully retrieved {ProjectCount} projects with repositories from Azure DevOps", result.Count);
+            _logger.LogInformation("Successfully retrieved {ProjectCount} projects from Azure DevOps", result.Count);
             return result;
         }
         catch (Exception ex)

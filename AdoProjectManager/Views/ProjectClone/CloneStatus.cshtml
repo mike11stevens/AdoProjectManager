@@ -4,6 +4,7 @@
     ViewData["Title"] = "Project Clone Status";
     var sourceProject = ViewBag.SourceProject as AdoProjectManager.Models.AdoProject;
     var cloneRequest = ViewBag.CloneRequest as AdoProjectManager.Models.ProjectCloneRequest;
+    var cloneOperationId = ViewBag.CloneOperationId as string;
 }
 
 <div class="container mt-4">
@@ -83,6 +84,7 @@
     <script>
         $(document).ready(function() {
             var cloneRequest = @Html.Raw(Json.Serialize(cloneRequest));
+            var cloneOperationId = '@cloneOperationId';
             var isCloneStarted = false;
             var cloneResult = null;
 
@@ -99,6 +101,9 @@
                 updateProgress(0, 'Starting clone operation...');
                 updateCurrentStep('info', 'Initiating project clone...');
 
+                // Add the clone operation ID to the request
+                cloneRequest.CloneOperationId = cloneOperationId;
+
                 $.ajax({
                     url: '@Url.Action("ExecuteClone")',
                     type: 'POST',
@@ -106,9 +111,9 @@
                     data: JSON.stringify(cloneRequest),
                     success: function(response) {
                         if (response.success) {
-                            handleCloneSuccess(response.data);
+                            handleCloneSuccess(response.result);
                         } else {
-                            handleCloneError(response.error || 'Unknown error occurred');
+                            handleCloneError(response.message || 'Unknown error occurred');
                         }
                     },
                     error: function(xhr, status, error) {

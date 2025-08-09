@@ -23,28 +23,74 @@ public class ProjectCloneController : Controller
         _settingsService = settingsService;
     }
 
-    public async Task<IActionResult> Index()
+    public async Task<IActionResult> Index(int page = 1, string searchQuery = "")
     {
         try
         {
-            _logger.LogInformation("ProjectClone Index action called");
-            var projects = await _adoService.GetProjectsAsync();
-            _logger.LogInformation("Retrieved {ProjectCount} projects, projects is null: {IsNull}", 
-                projects?.Count ?? 0, projects == null);
+            _logger.LogInformation("ProjectClone Index action called with page {Page}, search: {SearchQuery}", page, searchQuery);
             
-            // Ensure we never pass null to the view
-            if (projects == null)
+            // Use paginated method for better performance with large organizations
+            var request = new ProjectSearchRequest
             {
-                projects = new List<AdoProject>();
-            }
+                Page = page,
+                PageSize = 20,
+                SearchQuery = searchQuery,
+                IncludeRepositories = false // Don't need repositories for selection
+            };
             
-            return View(projects);
+            var result = await _adoService.GetProjectsPagedAsync(request);
+            _logger.LogInformation("Retrieved page {Page} with {ProjectCount} projects", page, result.Items?.Count ?? 0);
+            
+            return View(result);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error loading projects for clone selection");
             TempData["Error"] = "Failed to load projects. Please check your connection settings.";
-            return View(new List<AdoProject>());
+            
+            // Return empty paged result on error
+            var emptyResult = new PagedResult<AdoProject>
+            {
+                Items = new List<AdoProject>(),
+                CurrentPage = page,
+                PageSize = 20,
+                TotalItems = 0,
+                TotalPages = 0,
+                SearchQuery = searchQuery
+            };
+            
+            return View(emptyResult);
+        }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> SearchProjects(int page = 1, string searchQuery = "")
+    {
+        try
+        {
+            var request = new ProjectSearchRequest
+            {
+                Page = page,
+                PageSize = 20,
+                SearchQuery = searchQuery,
+                IncludeRepositories = false
+            };
+            
+            var result = await _adoService.GetProjectsPagedAsync(request);
+            return PartialView("_ProjectsCloneTable", result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error searching projects for clone");
+            return PartialView("_ProjectsCloneTable", new PagedResult<AdoProject>
+            {
+                Items = new List<AdoProject>(),
+                CurrentPage = page,
+                PageSize = 20,
+                TotalItems = 0,
+                TotalPages = 0,
+                SearchQuery = searchQuery
+            });
         }
     }
 
@@ -58,8 +104,7 @@ public class ProjectCloneController : Controller
 
         try
         {
-            var projects = await _adoService.GetProjectsAsync();
-            var sourceProject = projects.FirstOrDefault(p => p.Id == projectId);
+            var sourceProject = await _adoService.GetProjectByIdAsync(projectId);
             
             if (sourceProject == null)
             {
@@ -112,8 +157,7 @@ public class ProjectCloneController : Controller
             _logger.LogWarning("ModelState is invalid. Errors: {Errors}", 
                 string.Join(", ", ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage)));
             
-            var projects = await _adoService.GetProjectsAsync();
-            var sourceProject = projects.FirstOrDefault(p => p.Id == request.SourceProjectId);
+            var sourceProject = await _adoService.GetProjectByIdAsync(request.SourceProjectId);
             ViewBag.SourceProject = sourceProject;
             return View("Configure", request);
         }
@@ -137,8 +181,7 @@ public class ProjectCloneController : Controller
                 {
                     _logger.LogWarning("❌ Target organization validation failed for URL: {TargetOrganizationUrl}", request.TargetOrganizationUrl);
                     ModelState.AddModelError("TargetOrganizationUrl", "Cannot connect to target organization. Please check the URL and ensure you have access.");
-                    var projects = await _adoService.GetProjectsAsync();
-                    var sourceProject = projects.FirstOrDefault(p => p.Id == request.SourceProjectId);
+                    var sourceProject = await _adoService.GetProjectByIdAsync(request.SourceProjectId);
                     ViewBag.SourceProject = sourceProject;
                     return View("Configure", request);
                 }
@@ -154,8 +197,7 @@ public class ProjectCloneController : Controller
             _logger.LogError(ex, "Error starting project clone");
             ModelState.AddModelError("", "Failed to start project clone operation.");
             
-            var projects = await _adoService.GetProjectsAsync();
-            var sourceProject = projects.FirstOrDefault(p => p.Id == request.SourceProjectId);
+            var sourceProject = await _adoService.GetProjectByIdAsync(request.SourceProjectId);
             ViewBag.SourceProject = sourceProject;
             return View("Configure", request);
         }
@@ -172,11 +214,14 @@ public class ProjectCloneController : Controller
         var request = System.Text.Json.JsonSerializer.Deserialize<ProjectCloneRequest>(cloneRequestJson);
         
         // Get source project details for display
-        var projects = await _adoService.GetProjectsAsync();
-        var sourceProject = projects.FirstOrDefault(p => p.Id == request.SourceProjectId);
+        var sourceProject = await _adoService.GetProjectByIdAsync(request.SourceProjectId);
+        
+        // Generate unique clone operation ID for real-time updates
+        var cloneOperationId = Guid.NewGuid().ToString();
         
         ViewBag.SourceProject = sourceProject;
         ViewBag.CloneRequest = request;
+        ViewBag.CloneOperationId = cloneOperationId;
         
         return View();
     }
@@ -186,21 +231,30 @@ public class ProjectCloneController : Controller
     {
         try
         {
+            // If no clone operation ID is provided, generate one
+            if (string.IsNullOrEmpty(request.CloneOperationId))
+            {
+                request.CloneOperationId = Guid.NewGuid().ToString();
+            }
+
+            // Execute clone operation directly (synchronously for simplicity)
             var result = await _projectCloneService.CloneProjectAsync(request);
-            
-            if (result.Success)
-            {
-                return Json(new { success = true, data = result });
-            }
-            else
-            {
-                return Json(new { success = false, error = result.Error ?? result.Message });
-            }
+
+            // Return the result
+            return Json(new { 
+                success = result.Success, 
+                cloneOperationId = request.CloneOperationId,
+                message = result.Success ? "Clone completed successfully" : (result.Error ?? "Clone failed"),
+                result = result
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error executing project clone");
-            return Json(new { success = false, error = ex.Message });
+            return Json(new { 
+                success = false, 
+                message = ex.Message 
+            });
         }
     }
 

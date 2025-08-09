@@ -13,6 +13,7 @@ public class ProjectCloneRequest
     
     public string TargetProjectDescription { get; set; } = string.Empty;
     public string TargetOrganizationUrl { get; set; } = string.Empty; // Can be same or different org
+    public string CloneOperationId { get; set; } = string.Empty; // For real-time progress tracking
     public ProjectCloneOptions Options { get; set; } = new();
 }
 
@@ -22,11 +23,11 @@ public class ProjectCloneOptions
     public bool CloneWorkItems { get; set; } = true;
     public bool CloneAreaPaths { get; set; } = true;
     public bool CloneIterationPaths { get; set; } = true;
-    public bool CloneTeams { get; set; } = true; // Enable teams/permissions cloning by default
     public bool CloneBuildPipelines { get; set; } = true;
     public bool CloneReleasePipelines { get; set; } = true;
     public bool CloneDashboards { get; set; } = true; // Enable dashboards cloning by default
     public bool CloneQueries { get; set; } = true; // Enable queries cloning by default
+    public bool CloneWiki { get; set; } = true; // Enable wiki cloning by default
     public bool CloneProjectSettings { get; set; } = true; // Enable team configuration by default
     
     // Repository specific options
