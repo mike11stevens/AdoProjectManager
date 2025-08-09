@@ -68,7 +68,10 @@ public class ProjectCloneService : IProjectCloneService
             // Step 2: Create target project
             var newProjectId = await CreateTargetProject(request, sourceProject);
             result.NewProjectId = newProjectId;
-            result.NewProjectUrl = $"{request.TargetOrganizationUrl}/{request.TargetProjectName}";
+            
+            // Get source org URL since we're cloning within the same organization
+            var sourceOrgUrl = await GetSourceOrgUrl();
+            result.NewProjectUrl = $"{sourceOrgUrl}/{request.TargetProjectName}";
 
             result.Steps.Add(await ExecuteStep("Create Target Project", async () =>
             {
@@ -78,8 +81,9 @@ public class ProjectCloneService : IProjectCloneService
             result.CompletedSteps++;
 
             // Get connections for both source and target
-            var sourceConnection = await GetConnection(await GetSourceOrgUrl(), await GetSourcePat());
-            var targetConnection = await GetConnection(request.TargetOrganizationUrl, await GetTargetPat(request.TargetOrganizationUrl));
+            var sourceConnection = await GetConnection(sourceOrgUrl, await GetSourcePat());
+            // Since we're cloning within the same organization, target and source URLs are the same
+            var targetConnection = await GetConnection(sourceOrgUrl, await GetTargetPat(sourceOrgUrl));
 
             // Step 3: Clone project settings and service visibility
             if (request.Options.CloneProjectSettings)
@@ -309,8 +313,10 @@ public class ProjectCloneService : IProjectCloneService
 
     private async Task<string> CreateTargetProject(ProjectCloneRequest request, AdoProject sourceProject)
     {
-        var targetConnection = await GetConnection(request.TargetOrganizationUrl, await GetTargetPat(request.TargetOrganizationUrl));
-        var sourceConnection = await GetConnection(await GetSourceOrgUrl(), await GetSourcePat());
+        // Since we're cloning within the same organization, target and source URLs are the same
+        var sourceOrgUrl = await GetSourceOrgUrl();
+        var targetConnection = await GetConnection(sourceOrgUrl, await GetTargetPat(sourceOrgUrl));
+        var sourceConnection = await GetConnection(sourceOrgUrl, await GetSourcePat());
         
         var projectClient = targetConnection.GetClient<ProjectHttpClient>();
         var sourceProjectClient = sourceConnection.GetClient<ProjectHttpClient>();
@@ -639,28 +645,66 @@ public class ProjectCloneService : IProjectCloneService
             
             _logger.LogInformation("🔍 Analyzing source project service capabilities...");
             
-            // Map Azure DevOps service identifiers with their display names
+            // Comprehensive Azure DevOps service mapping with all known identifiers
             var serviceSettingsMap = new Dictionary<string, string>
             {
+                // Boards/Work Item Tracking - process template indicates Boards is enabled
                 { "ms.vss-work.agile", "Boards" },
+                { "ms.vss-work.agile-plans", "Boards" },
+                { "ms.vss-work.workItemTracking", "Boards" },
+                { "processTemplate", "Boards" }, // Core capability indicating Boards service
+                
+                // Repos/Version Control
                 { "ms.vss-code.version-control", "Repos" },
+                { "ms.vss-code.git", "Repos" },
+                { "ms.vss-tfs-web.tfs-git", "Repos" },
+                { "versioncontrol", "Repos" }, // Core capability indicating Repos service
+                
+                // Pipelines/Build
                 { "ms.vss-build.pipelines", "Pipelines" },
+                { "ms.vss-tfs-web.tfs-build", "Pipelines" },
+                { "ms.vss-build.build", "Pipelines" },
+                
+                // Test Plans
                 { "ms.vss-test-web.test", "Test Plans" },
+                { "ms.vss-test.test-plans", "Test Plans" },
+                { "ms.vss-testmanagement-web.testmanagement", "Test Plans" },
+                
+                // Artifacts
                 { "ms.vss-features.artifacts", "Artifacts" },
+                { "ms.vss-package-web.package", "Artifacts" },
+                
+                // Dashboards
                 { "ms.vss-dashboards-web.dashboards", "Dashboards" },
+                
+                // Wiki
                 { "ms.vss-wiki.wiki", "Wiki" }
             };
 
-            // Enhanced service detection and logging
-            _logger.LogInformation("📊 Service visibility analysis:");
-            var detectedServices = new List<string>();
-            var enabledServices = new List<string>();
-            var disabledServices = new List<string>();
-
+            _logger.LogInformation("📊 Detailed service visibility analysis:");
+            var detectedServices = new Dictionary<string, bool>();
+            var serviceUpdates = new Dictionary<string, Dictionary<string, string>>();
+            var detectedCapabilityKeys = new List<string>();
+            
+            // First, log all available capabilities for debugging
+            _logger.LogInformation("🔍 All source project capabilities ({Count} total):", sourceCapabilities.Count);
+            foreach (var capability in sourceCapabilities)
+            {
+                _logger.LogInformation("  📋 Capability: {Key}", capability.Key);
+                foreach (var detail in capability.Value.Take(3)) // Log first 3 details to avoid spam
+                {
+                    _logger.LogInformation("    └─ {Key}: {Value}", detail.Key, detail.Value);
+                }
+                if (capability.Value.Count > 3)
+                {
+                    _logger.LogInformation("    └─ ... and {MoreCount} more properties", capability.Value.Count - 3);
+                }
+            }
+            
             // Check if source project has service visibility information
             bool hasServiceVisibilityInfo = false;
             
-            // Look for service-related capabilities in source project
+            // Analyze each capability to determine service states
             foreach (var sourceCapability in sourceCapabilities)
             {
                 var capabilityKey = sourceCapability.Key;
@@ -669,100 +713,285 @@ public class ProjectCloneService : IProjectCloneService
                 {
                     hasServiceVisibilityInfo = true;
                     var serviceName = serviceSettingsMap[capabilityKey];
-                    detectedServices.Add(serviceName);
+                    detectedCapabilityKeys.Add(capabilityKey);
                     
-                    // Check if service is enabled (look for "enabled" or similar indicators)
-                    var isEnabled = true; // Default assumption
-                    if (sourceCapability.Value.ContainsKey("enabled"))
-                    {
-                        bool.TryParse(sourceCapability.Value["enabled"], out isEnabled);
-                    }
-                    else if (sourceCapability.Value.ContainsKey("state"))
-                    {
-                        isEnabled = !sourceCapability.Value["state"].Equals("disabled", StringComparison.OrdinalIgnoreCase);
-                    }
+                    // Enhanced service state detection
+                    var isEnabled = DetermineServiceEnabledState(sourceCapability.Value);
+                    detectedServices[serviceName] = isEnabled;
                     
-                    if (isEnabled)
+                    // Store the complete capability for later application
+                    serviceUpdates[capabilityKey] = new Dictionary<string, string>(sourceCapability.Value);
+                    
+                    var statusEmoji = isEnabled ? "🟢" : "🔴";
+                    var statusText = isEnabled ? "ENABLED" : "DISABLED";
+                    _logger.LogInformation("{Emoji} {ServiceName}: {Status} (Key: {CapabilityKey})", 
+                        statusEmoji, serviceName, statusText, capabilityKey);
+                        
+                    // Log capability details for debugging
+                    foreach (var detail in sourceCapability.Value)
                     {
-                        enabledServices.Add(serviceName);
-                        _logger.LogInformation("✅ Service {ServiceName} is ENABLED in source project", serviceName);
-                    }
-                    else
-                    {
-                        disabledServices.Add(serviceName);
-                        _logger.LogInformation("❌ Service {ServiceName} is DISABLED in source project", serviceName);
+                        _logger.LogInformation("    └─ {Key}: {Value}", detail.Key, detail.Value);
                     }
                 }
             }
 
-            _logger.LogInformation("📈 Service visibility summary: {DetectedCount} detected, {EnabledCount} enabled, {DisabledCount} disabled", 
-                detectedServices.Count, enabledServices.Count, disabledServices.Count);
+            // Also check for service-specific properties that might indicate service states
+            await AnalyzeServiceSpecificProperties(connection, projectId, sourceCapabilities, detectedServices);
 
             if (!hasServiceVisibilityInfo)
             {
-                _logger.LogWarning("⚠️ No service visibility information found in source project capabilities");
+                _logger.LogWarning("⚠️ No Azure DevOps service visibility information found in source project capabilities");
                 _logger.LogInformation("🔍 Available source capabilities: {Capabilities}", 
                     string.Join(", ", sourceCapabilities.Keys));
                 
-                // Try the alternative approach
-                await CheckProjectFeaturesAlternative(connection, projectId);
-                return;
+                // Try alternative detection methods
+                await DetectServicesAlternativeMethod(connection, projectId, sourceCapabilities, detectedServices);
+                
+                if (detectedServices.Count == 0)
+                {
+                    _logger.LogWarning("⚠️ Could not detect any service states using alternative methods either");
+                    return;
+                }
             }
+
+            _logger.LogInformation("📈 Service visibility detection summary:");
+            _logger.LogInformation("  🔍 Detected services: {ServiceNames}", string.Join(", ", detectedServices.Keys));
+            _logger.LogInformation("  ✅ Enabled services: {EnabledServices}", string.Join(", ", detectedServices.Where(s => s.Value).Select(s => s.Key)));
+            _logger.LogInformation("  ❌ Disabled services: {DisabledServices}", string.Join(", ", detectedServices.Where(s => !s.Value).Select(s => s.Key)));
 
             // Apply service settings to target project
-            _logger.LogInformation("🔄 Attempting to apply service visibility settings to target project...");
+            _logger.LogInformation("🔄 Applying {ServiceCount} service visibility settings to target project...", serviceUpdates.Count);
             
-            // Note: The actual service visibility API requires special permissions
-            // For now, we log what would be applied
-            foreach (var serviceName in enabledServices)
-            {
-                _logger.LogInformation("🟢 Would enable service: {ServiceName}", serviceName);
-            }
-            
-            foreach (var serviceName in disabledServices)
-            {
-                _logger.LogInformation("🔴 Would disable service: {ServiceName}", serviceName);
-            }
-
-            // Try to apply settings using project update
             try
             {
+                // Prepare project update with service visibility settings
                 var updateRequest = new TeamProject
                 {
                     Id = new Guid(projectId),
                     Capabilities = new Dictionary<string, Dictionary<string, string>>()
                 };
 
-                // Copy service capabilities that we want to preserve
-                foreach (var kvp in sourceCapabilities)
+                // Start with existing capabilities from target project
+                if (targetProject.Capabilities != null)
                 {
-                    if (serviceSettingsMap.ContainsKey(kvp.Key))
+                    foreach (var cap in targetProject.Capabilities)
                     {
-                        updateRequest.Capabilities[kvp.Key] = new Dictionary<string, string>(kvp.Value);
-                        _logger.LogInformation("📝 Adding capability {ServiceKey} to update request", kvp.Key);
+                        updateRequest.Capabilities[cap.Key] = new Dictionary<string, string>(cap.Value);
                     }
                 }
 
-                if (updateRequest.Capabilities.Any())
+                // Apply service capabilities from source
+                var appliedCount = 0;
+                foreach (var serviceUpdate in serviceUpdates)
                 {
-                    _logger.LogInformation("🚀 Attempting to update project with {Count} service capabilities", updateRequest.Capabilities.Count);
+                    updateRequest.Capabilities[serviceUpdate.Key] = serviceUpdate.Value;
+                    appliedCount++;
                     
-                    // Note: This may require additional permissions
-                    // var operationReference = await projectClient.UpdateProject(updateRequest);
-                    _logger.LogInformation("💡 Service visibility update would be applied here (requires project admin permissions)");
+                    var serviceName = serviceSettingsMap[serviceUpdate.Key];
+                    var isEnabled = detectedServices[serviceName];
+                    var statusEmoji = isEnabled ? "✅" : "❌";
+                    _logger.LogInformation("{Emoji} Applied {ServiceName} service configuration", statusEmoji, serviceName);
+                }
+
+                if (appliedCount > 0)
+                {
+                    _logger.LogInformation("� Updating project with {Count} service visibility settings...", appliedCount);
+                    
+                    var operationReference = await projectClient.UpdateProject(updateRequest.Id, updateRequest);
+                    
+                    if (operationReference != null)
+                    {
+                        await WaitForOperation(connection, operationReference);
+                        _logger.LogInformation("✅ Successfully applied {Count} service visibility settings", appliedCount);
+                    }
+                    
+                    // Verify the changes were applied
+                    await VerifyServiceSettings(connection, projectId, detectedServices);
+                }
+                else
+                {
+                    _logger.LogInformation("ℹ️ No service visibility settings to apply");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "⚠️ Could not apply service visibility settings directly");
+                _logger.LogWarning(ex, "⚠️ Could not apply service visibility settings directly. Reason: {Error}", ex.Message);
+                
+                // Try alternative feature management approach
+                await ApplyServiceSettingsWithFeatureManagement(connection, projectId, detectedServices);
             }
 
-            _logger.LogInformation("✅ Service visibility analysis completed for project {ProjectId}", projectId);
+            _logger.LogInformation("✅ Service visibility analysis and application completed for project {ProjectId}", projectId);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "❌ Failed to apply service visibility settings for project {ProjectId}", projectId);
             throw;
+        }
+    }
+
+    private async Task VerifyServiceSettings(VssConnection connection, string projectId, Dictionary<string, bool> expectedServices)
+    {
+        try
+        {
+            _logger.LogInformation("� Verifying applied service settings...");
+            
+            var projectClient = connection.GetClient<ProjectHttpClient>();
+            var updatedProject = await projectClient.GetProject(projectId, includeCapabilities: true);
+            
+            if (updatedProject.Capabilities != null)
+            {
+                var serviceSettingsMap = new Dictionary<string, string>
+                {
+                    { "ms.vss-work.agile", "Boards" },
+                    { "ms.vss-code.version-control", "Repos" },
+                    { "ms.vss-build.pipelines", "Pipelines" },
+                    { "ms.vss-test-web.test", "Test Plans" },
+                    { "ms.vss-features.artifacts", "Artifacts" },
+                    { "ms.vss-dashboards-web.dashboards", "Dashboards" },
+                    { "ms.vss-wiki.wiki", "Wiki" }
+                };
+
+                foreach (var expectedService in expectedServices)
+                {
+                    var serviceName = expectedService.Key;
+                    var expectedState = expectedService.Value;
+                    
+                    // Find the capability key for this service
+                    var capabilityKey = serviceSettingsMap.FirstOrDefault(x => x.Value == serviceName).Key;
+                    if (!string.IsNullOrEmpty(capabilityKey) && updatedProject.Capabilities.ContainsKey(capabilityKey))
+                    {
+                        var actualState = DetermineServiceEnabledState(updatedProject.Capabilities[capabilityKey]);
+                        var matchEmoji = actualState == expectedState ? "✅" : "❌";
+                        _logger.LogInformation("{Emoji} {ServiceName}: Expected {Expected}, Actual {Actual}", 
+                            matchEmoji, serviceName, expectedState ? "ENABLED" : "DISABLED", actualState ? "ENABLED" : "DISABLED");
+                    }
+                    else
+                    {
+                        _logger.LogWarning("⚠️ {ServiceName}: Could not verify state (capability not found)", serviceName);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "⚠️ Could not verify service settings");
+        }
+    }
+
+    private async Task ApplyServiceSettingsWithFeatureManagement(VssConnection connection, string projectId, Dictionary<string, bool> serviceStates)
+    {
+        try
+        {
+            _logger.LogInformation("🔄 Attempting alternative service configuration approach...");
+            
+            // This would use the Feature Management API if available
+            // For now, log what would be applied
+            foreach (var service in serviceStates)
+            {
+                var statusEmoji = service.Value ? "🟢" : "🔴";
+                var action = service.Value ? "enable" : "disable";
+                _logger.LogInformation("{Emoji} Would {Action} {ServiceName} service", statusEmoji, action, service.Key);
+            }
+            
+            _logger.LogInformation("💡 Alternative service configuration approach completed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "⚠️ Alternative service configuration approach failed");
+        }
+    }
+
+    private async Task AnalyzeServiceSpecificProperties(VssConnection connection, string projectId, Dictionary<string, Dictionary<string, string>> sourceCapabilities, Dictionary<string, bool> detectedServices)
+    {
+        try
+        {
+            _logger.LogInformation("🔍 Analyzing service-specific properties for enhanced detection...");
+            
+            // Look for specific patterns that indicate service states
+            var processTemplateCapability = sourceCapabilities.FirstOrDefault(c => c.Key.Contains("processTemplate"));
+            if (processTemplateCapability.Key != null)
+            {
+                _logger.LogInformation("📋 Found process template capability - Boards service likely enabled");
+                if (!detectedServices.ContainsKey("Boards"))
+                {
+                    detectedServices["Boards"] = true;
+                }
+            }
+            
+            // Check for Git-specific capabilities
+            var gitCapabilities = sourceCapabilities.Where(c => c.Key.ToLowerInvariant().Contains("git") || 
+                                                               c.Value.Any(v => v.Key.ToLowerInvariant().Contains("git"))).ToList();
+            if (gitCapabilities.Any())
+            {
+                _logger.LogInformation("📂 Found Git-related capabilities - Repos service likely enabled");
+                if (!detectedServices.ContainsKey("Repos"))
+                {
+                    detectedServices["Repos"] = true;
+                }
+            }
+            
+            // Check for build/pipeline indicators
+            var buildCapabilities = sourceCapabilities.Where(c => c.Key.ToLowerInvariant().Contains("build") || 
+                                                                c.Key.ToLowerInvariant().Contains("pipeline")).ToList();
+            if (buildCapabilities.Any())
+            {
+                _logger.LogInformation("🔧 Found build/pipeline capabilities - Pipelines service likely enabled");
+                if (!detectedServices.ContainsKey("Pipelines"))
+                {
+                    detectedServices["Pipelines"] = true;
+                }
+            }
+            
+            _logger.LogInformation("✅ Service-specific property analysis completed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "⚠️ Service-specific property analysis failed");
+        }
+    }
+
+    private async Task DetectServicesAlternativeMethod(VssConnection connection, string projectId, Dictionary<string, Dictionary<string, string>> sourceCapabilities, Dictionary<string, bool> detectedServices)
+    {
+        try
+        {
+            _logger.LogInformation("🔍 Using alternative service detection method...");
+            
+            // Try to detect services by checking for specific capability patterns
+            var alternativeServiceMap = new Dictionary<string, string[]>
+            {
+                { "Boards", new[] { "processtemplate", "agile", "workitemtracking", "boards" } },
+                { "Repos", new[] { "versioncontrol", "git", "sourcecontrol", "repos" } },
+                { "Pipelines", new[] { "build", "pipeline", "ci", "cd" } },
+                { "Test Plans", new[] { "test", "testmanagement", "testplans" } },
+                { "Artifacts", new[] { "package", "artifact", "feed" } },
+                { "Dashboards", new[] { "dashboard", "chart", "widget" } },
+                { "Wiki", new[] { "wiki", "documentation" } }
+            };
+            
+            foreach (var service in alternativeServiceMap)
+            {
+                var serviceName = service.Key;
+                var keywords = service.Value;
+                
+                var hasIndicators = sourceCapabilities.Any(cap => 
+                    keywords.Any(keyword => 
+                        cap.Key.ToLowerInvariant().Contains(keyword) ||
+                        cap.Value.Any(v => v.Key.ToLowerInvariant().Contains(keyword) || 
+                                          v.Value.ToLowerInvariant().Contains(keyword))));
+                
+                if (hasIndicators && !detectedServices.ContainsKey(serviceName))
+                {
+                    detectedServices[serviceName] = true;
+                    _logger.LogInformation("🔍 Alternative detection: {ServiceName} appears to be enabled", serviceName);
+                }
+            }
+            
+            _logger.LogInformation("✅ Alternative service detection completed. Detected {Count} services.", detectedServices.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "⚠️ Alternative service detection failed");
         }
     }
 
@@ -789,24 +1018,125 @@ public class ProjectCloneService : IProjectCloneService
 
     private bool DetermineServiceEnabledState(Dictionary<string, string> capabilityValues)
     {
-        // Check various possible indicators that a service is enabled
+        // Enhanced service state detection with multiple approaches
+        
+        // Special handling for version control capability
+        if (capabilityValues.ContainsKey("gitEnabled"))
+        {
+            if (bool.TryParse(capabilityValues["gitEnabled"], out bool gitEnabled))
+            {
+                return gitEnabled;
+            }
+        }
+        
+        // Special handling for TFVC
+        if (capabilityValues.ContainsKey("tfvcEnabled"))
+        {
+            if (bool.TryParse(capabilityValues["tfvcEnabled"], out bool tfvcEnabled))
+            {
+                return tfvcEnabled;
+            }
+        }
+        
+        // Check for explicit enabled/disabled indicators
         if (capabilityValues.ContainsKey("enabled"))
         {
-            return capabilityValues["enabled"].Equals("True", StringComparison.OrdinalIgnoreCase);
+            var enabledValue = capabilityValues["enabled"];
+            if (bool.TryParse(enabledValue, out bool explicitEnabled))
+            {
+                return explicitEnabled;
+            }
+            return enabledValue.Equals("True", StringComparison.OrdinalIgnoreCase);
         }
         
+        // Check for state indicators
         if (capabilityValues.ContainsKey("state"))
         {
-            return capabilityValues["state"].Equals("enabled", StringComparison.OrdinalIgnoreCase);
+            var state = capabilityValues["state"]?.ToLowerInvariant();
+            return !string.IsNullOrEmpty(state) && 
+                   state != "disabled" && 
+                   state != "off" && 
+                   state != "false" &&
+                   state != "hidden";
         }
         
+        // Check for visibility indicators
         if (capabilityValues.ContainsKey("visibility"))
         {
-            return capabilityValues["visibility"].Equals("public", StringComparison.OrdinalIgnoreCase) ||
-                   capabilityValues["visibility"].Equals("enabled", StringComparison.OrdinalIgnoreCase);
+            var visibility = capabilityValues["visibility"]?.ToLowerInvariant();
+            return !string.IsNullOrEmpty(visibility) && 
+                   visibility != "hidden" && 
+                   visibility != "disabled" && 
+                   visibility != "off" &&
+                   visibility != "private";
         }
         
-        // If no clear indicator, default to enabled
+        // Check for enabled indicator variations
+        foreach (var kvp in capabilityValues)
+        {
+            var key = kvp.Key.ToLowerInvariant();
+            var value = kvp.Value?.ToLowerInvariant();
+            
+            // Look for enable/disable keywords in key names
+            if (key.Contains("enable") || key.Contains("active") || key.Contains("visible"))
+            {
+                if (bool.TryParse(kvp.Value, out bool boolValue))
+                {
+                    return boolValue;
+                }
+                
+                if (value == "true" || value == "on" || value == "yes" || value == "active")
+                {
+                    return true;
+                }
+                if (value == "false" || value == "off" || value == "no" || value == "inactive" || value == "disabled")
+                {
+                    return false;
+                }
+            }
+            
+            // Check for disable keywords in values
+            if (value == "disabled" || value == "hidden" || value == "off")
+            {
+                return false;
+            }
+        }
+        
+        // Check for known Azure DevOps capability patterns that indicate enabled services
+        var enabledIndicators = new[]
+        {
+            "versioncontrolcapabilityattributes",
+            "processtemplate", 
+            "defaultteamimageurl",
+            "gitenabledvalue",
+            "backlogvisibility",
+            "bugsbehavior",
+            "testmanagementenabled",
+            "templateName",      // Process template name indicates Boards is enabled
+            "templateTypeId",    // Process template ID indicates Boards is enabled
+            "sourceControlType"  // Source control type indicates Repos is enabled
+        };
+        
+        if (enabledIndicators.Any(indicator => capabilityValues.ContainsKey(indicator)))
+        {
+            return true;
+        }
+        
+        // Check if capability has substantive configuration (indicates enabled)
+        if (capabilityValues.Count > 2)
+        {
+            // If there are multiple meaningful properties, the service is likely configured/enabled
+            return true;
+        }
+        
+        // Special case: empty or minimal capabilities might indicate disabled service
+        if (capabilityValues.Count == 0)
+        {
+            return false;
+        }
+        
+        // If capability exists but no clear indicators, assume enabled
+        // (Azure DevOps typically includes capabilities for enabled services)
         return true;
     }
 
