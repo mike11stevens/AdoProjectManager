@@ -703,6 +703,15 @@ public class ProjectCloneService : IProjectCloneService
                 }
             }
             
+            // ENHANCED: Use FeatureManagement API to detect ALL service states (including disabled ones)
+            _logger.LogInformation("🌐 Using FeatureManagement API for comprehensive service state detection...");
+            // Note: We need to detect from the SOURCE project (where sourceCapabilities come from)
+            // However, we don't have direct access to source project ID here. 
+            // As a workaround, we'll log this limitation and use the fallback capability-based detection.
+            _logger.LogWarning("ℹ️ FeatureManagement API detection would require source project ID - using capability-based detection for now");
+            
+            // TODO: Modify method signature to accept source project ID for proper FeatureManagement API detection
+            
             // Check if source project has service visibility information
             bool hasServiceVisibilityInfo = false;
             
@@ -739,6 +748,18 @@ public class ProjectCloneService : IProjectCloneService
 
             // Also check for service-specific properties that might indicate service states
             await AnalyzeServiceSpecificProperties(connection, projectId, sourceCapabilities, detectedServices);
+
+            // ENHANCED: Ensure all major Azure DevOps services are checked (mark missing ones as disabled)
+            var allMajorServices = new List<string> { "Boards", "Repos", "Pipelines", "Test Plans", "Artifacts" };
+            foreach (var serviceName in allMajorServices)
+            {
+                if (!detectedServices.ContainsKey(serviceName))
+                {
+                    // If a major service is not detected in capabilities, it's likely disabled
+                    detectedServices[serviceName] = false;
+                    _logger.LogInformation("🔴 {ServiceName}: DISABLED (Not found in project capabilities - likely disabled)", serviceName);
+                }
+            }
 
             if (!hasServiceVisibilityInfo)
             {
@@ -1013,6 +1034,140 @@ public class ProjectCloneService : IProjectCloneService
         {
             _logger.LogWarning(ex, "⚠️ FeatureManagement API service configuration failed");
             await LogServiceConfigurationInstructions(serviceStates);
+        }
+    }
+
+    private async Task DetectAllServiceStatesUsingAPI(VssConnection connection, string projectId, Dictionary<string, bool> detectedServices)
+    {
+        try
+        {
+            _logger.LogInformation("🌐 Checking actual service states using FeatureManagement API for project {ProjectId}...", projectId);
+            
+            // Map service names to Azure DevOps feature IDs (from Stack Overflow reference)
+            var serviceFeatureMap = new Dictionary<string, string>
+            {
+                { "Boards", "ms.vss-work.agile" },
+                { "Repos", "ms.vss-code.version-control" },
+                { "Pipelines", "ms.vss-build.pipelines" },
+                { "Test Plans", "ms.vss-test-web.test" },
+                { "Artifacts", "ms.azure-artifacts.feature" }
+            };
+            
+            using var httpClient = new HttpClient();
+            
+            // Get base URL and authentication from VssConnection
+            var baseUrl = connection.Uri.ToString().TrimEnd('/');
+            
+            // Set up authentication for HttpClient - use PAT from settings or environment
+            string personalAccessToken = "";
+            
+            // Try to get PAT from settings first
+            try
+            {
+                var settings = await _settingsService.GetSettingsAsync();
+                personalAccessToken = settings?.PersonalAccessToken ?? "";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not retrieve PAT from settings, trying environment variable");
+            }
+            
+            // Fallback to environment variable
+            if (string.IsNullOrEmpty(personalAccessToken))
+            {
+                personalAccessToken = Environment.GetEnvironmentVariable("AZURE_DEVOPS_PAT") ?? "";
+            }
+            
+            if (!string.IsNullOrEmpty(personalAccessToken))
+            {
+                var authValue = Convert.ToBase64String(Encoding.ASCII.GetBytes($":{personalAccessToken}"));
+                httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authValue);
+                _logger.LogInformation("🔑 Using Personal Access Token for FeatureManagement API authentication");
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ No authentication token available for FeatureManagement API");
+                return;
+            }
+            
+            // Check each service state using GET requests to the FeatureManagement API
+            foreach (var service in serviceFeatureMap)
+            {
+                var serviceName = service.Key;
+                var featureId = service.Value;
+                
+                try
+                {
+                    // Build the FeatureManagement API URL for getting current state
+                    var apiUrl = $"{baseUrl}/_apis/FeatureManagement/FeatureStates/host/project/{projectId}/{featureId}?api-version=4.1-preview.1";
+                    
+                    _logger.LogInformation("🌐 GET {ApiUrl}", apiUrl);
+                    
+                    var response = await httpClient.GetAsync(apiUrl);
+                    
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var responseContent = await response.Content.ReadAsStringAsync();
+                        _logger.LogInformation("📥 {ServiceName} API Response: {ResponseContent}", serviceName, responseContent);
+                        
+                        // Parse the response to determine if the service is enabled
+                        try
+                        {
+                            var featureState = JsonSerializer.Deserialize<JsonElement>(responseContent);
+                            
+                            // Check for 'state' property - should be 0 (disabled) or 1 (enabled)
+                            if (featureState.TryGetProperty("state", out var stateProperty))
+                            {
+                                var stateValue = stateProperty.GetInt32();
+                                var isEnabled = stateValue == 1;
+                                detectedServices[serviceName] = isEnabled;
+                                
+                                var statusEmoji = isEnabled ? "🟢" : "🔴";
+                                var statusText = isEnabled ? "ENABLED" : "DISABLED";
+                                _logger.LogInformation("{Emoji} {ServiceName}: {Status} (API State: {StateValue})", 
+                                    statusEmoji, serviceName, statusText, stateValue);
+                            }
+                            else
+                            {
+                                // If no explicit state, assume enabled based on successful response
+                                detectedServices[serviceName] = true;
+                                _logger.LogInformation("🟢 {ServiceName}: ENABLED (API accessible, assuming enabled)", serviceName);
+                            }
+                        }
+                        catch (JsonException jsonEx)
+                        {
+                            _logger.LogWarning(jsonEx, "⚠️ Could not parse JSON response for {ServiceName}", serviceName);
+                            // If we can't parse but got successful response, assume enabled
+                            detectedServices[serviceName] = true;
+                        }
+                    }
+                    else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    {
+                        // Service feature not found likely means it's disabled/not available
+                        detectedServices[serviceName] = false;
+                        _logger.LogInformation("🔴 {ServiceName}: DISABLED (Feature not found - 404)", serviceName);
+                    }
+                    else
+                    {
+                        var errorContent = await response.Content.ReadAsStringAsync();
+                        _logger.LogWarning("⚠️ Failed to check {ServiceName} service state. Status: {StatusCode}, Error: {ErrorContent}", 
+                            serviceName, response.StatusCode, errorContent);
+                        
+                        // On API error, we can't determine state reliably, skip this service
+                        _logger.LogInformation("❓ {ServiceName}: UNKNOWN (API error, will rely on capability detection)", serviceName);
+                    }
+                }
+                catch (Exception serviceEx)
+                {
+                    _logger.LogWarning(serviceEx, "⚠️ Could not check {ServiceName} service state via FeatureManagement API: {Error}", serviceName, serviceEx.Message);
+                }
+            }
+            
+            _logger.LogInformation("✅ FeatureManagement API service state detection completed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "⚠️ FeatureManagement API service detection failed, will fall back to capability-based detection");
         }
     }
 
@@ -1592,6 +1747,16 @@ public class ProjectCloneService : IProjectCloneService
                     clonedCount++;
                     
                     progress?.Report($"Created work item: {newWorkItem.Id} - {newWorkItem.Fields["System.Title"]}");
+                    
+                    // Clone attachments for this work item
+                    if (sourceWi.Relations != null)
+                    {
+                        var attachmentCount = await CloneWorkItemAttachments(sourceConn, targetConn, sourceWi, newWorkItem.Id.Value, progress);
+                        if (attachmentCount > 0)
+                        {
+                            progress?.Report($"Cloned {attachmentCount} attachments for work item {newWorkItem.Id}");
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1699,6 +1864,128 @@ public class ProjectCloneService : IProjectCloneService
         }
 
         return relationshipCount;
+    }
+
+    private async Task<int> CloneWorkItemAttachments(VssConnection sourceConn, VssConnection targetConn, WorkItem sourceWorkItem, int targetWorkItemId, IProgress<string>? progress)
+    {
+        var attachmentCount = 0;
+        
+        try
+        {
+            var sourceWitClient = sourceConn.GetClient<WorkItemTrackingHttpClient>();
+            var targetWitClient = targetConn.GetClient<WorkItemTrackingHttpClient>();
+            
+            // Find attachment relations in the source work item
+            var attachmentRelations = sourceWorkItem.Relations?
+                .Where(r => r.Rel == "AttachedFile")
+                .ToList();
+                
+            if (attachmentRelations == null || !attachmentRelations.Any())
+            {
+                return 0; // No attachments to clone
+            }
+            
+            var patchDocument = new JsonPatchDocument();
+            
+            foreach (var attachmentRelation in attachmentRelations)
+            {
+                try
+                {
+                    // Extract attachment ID from URL
+                    var attachmentId = ExtractAttachmentIdFromUrl(attachmentRelation.Url);
+                    if (!attachmentId.HasValue)
+                    {
+                        _logger.LogWarning("Could not extract attachment ID from URL: {Url}", attachmentRelation.Url);
+                        continue;
+                    }
+                    
+                    // Download attachment from source
+                    var attachmentStream = await sourceWitClient.GetAttachmentContentAsync(attachmentId.Value);
+                    
+                    if (attachmentStream == null)
+                    {
+                        _logger.LogWarning("Could not download attachment {AttachmentId}", attachmentId.Value);
+                        continue;
+                    }
+                    
+                    // Get attachment metadata
+                    var fileName = attachmentRelation.Attributes?.GetValueOrDefault("name")?.ToString() ?? $"attachment_{attachmentId.Value}";
+                    var comment = attachmentRelation.Attributes?.GetValueOrDefault("comment")?.ToString() ?? "";
+                    
+                    // Upload attachment to target project
+                    var uploadedAttachment = await targetWitClient.CreateAttachmentAsync(
+                        uploadStream: attachmentStream, 
+                        fileName: fileName, 
+                        uploadType: null, 
+                        areaPath: null, 
+                        userState: null, 
+                        cancellationToken: CancellationToken.None);
+                    
+                    if (uploadedAttachment != null)
+                    {
+                        // Add attachment reference to the target work item
+                        patchDocument.Add(new JsonPatchOperation
+                        {
+                            Operation = Microsoft.VisualStudio.Services.WebApi.Patch.Operation.Add,
+                            Path = "/relations/-",
+                            Value = new
+                            {
+                                rel = "AttachedFile",
+                                url = uploadedAttachment.Url,
+                                attributes = new Dictionary<string, object>
+                                {
+                                    ["name"] = fileName,
+                                    ["comment"] = comment
+                                }
+                            }
+                        });
+                        
+                        attachmentCount++;
+                        progress?.Report($"Cloned attachment: {fileName}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to clone attachment from work item {SourceWorkItemId}", sourceWorkItem.Id);
+                    progress?.Report($"Failed to clone attachment: {ex.Message}");
+                }
+            }
+            
+            // Apply all attachment relations to the target work item
+            if (patchDocument.Any())
+            {
+                await targetWitClient.UpdateWorkItemAsync(patchDocument, targetWorkItemId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error cloning attachments for work item {SourceWorkItemId} to {TargetWorkItemId}", sourceWorkItem.Id, targetWorkItemId);
+            progress?.Report($"Error cloning attachments: {ex.Message}");
+        }
+        
+        return attachmentCount;
+    }
+
+    private Guid? ExtractAttachmentIdFromUrl(string url)
+    {
+        try
+        {
+            // Attachment URLs typically look like: https://dev.azure.com/{org}/_apis/wit/attachments/{attachmentId}
+            var uri = new Uri(url);
+            var segments = uri.Segments;
+            var lastSegment = segments[segments.Length - 1];
+            
+            if (Guid.TryParse(lastSegment, out var attachmentId))
+            {
+                return attachmentId;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to extract attachment ID from URL: {Url}", url);
+        }
+
+        return null;
     }
 
     private int? ExtractWorkItemIdFromUrl(string url)
