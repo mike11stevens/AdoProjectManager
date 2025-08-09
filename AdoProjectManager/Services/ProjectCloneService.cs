@@ -15,6 +15,8 @@ using Microsoft.VisualStudio.Services.Security;
 using Microsoft.VisualStudio.Services.Security.Client;
 using Microsoft.VisualStudio.Services.Graph.Client;
 using System.Diagnostics;
+using System.Text.Json;
+using System.Text;
 
 namespace AdoProjectManager.Services;
 
@@ -883,23 +885,234 @@ public class ProjectCloneService : IProjectCloneService
     {
         try
         {
-            _logger.LogInformation("🔄 Attempting alternative service configuration approach...");
+            _logger.LogInformation("🔄 Applying service configurations using Azure DevOps FeatureManagement API...");
             
-            // This would use the Feature Management API if available
-            // For now, log what would be applied
-            foreach (var service in serviceStates)
+            // Map service names to Azure DevOps feature IDs (from Stack Overflow reference)
+            var serviceFeatureMap = new Dictionary<string, string>
             {
-                var statusEmoji = service.Value ? "🟢" : "🔴";
-                var action = service.Value ? "enable" : "disable";
-                _logger.LogInformation("{Emoji} Would {Action} {ServiceName} service", statusEmoji, action, service.Key);
+                { "Boards", "ms.vss-work.agile" },
+                { "Repos", "ms.vss-code.version-control" },
+                { "Pipelines", "ms.vss-build.pipelines" },
+                { "Test Plans", "ms.vss-test-web.test" },
+                { "Artifacts", "ms.azure-artifacts.feature" }
+            };
+            
+            var appliedCount = 0;
+            using var httpClient = new HttpClient();
+            
+            // Get base URL and authentication from VssConnection
+            var baseUrl = connection.Uri.ToString().TrimEnd('/');
+            var credentials = connection.Credentials;
+            
+            // Set up authentication for HttpClient - simplified approach
+            // Try to extract PAT from the connection or environment
+            var personalAccessToken = Environment.GetEnvironmentVariable("AZURE_DEVOPS_PAT") ?? "";
+            
+            // If we have a PAT, use Basic authentication
+            if (!string.IsNullOrEmpty(personalAccessToken))
+            {
+                var authValue = Convert.ToBase64String(Encoding.ASCII.GetBytes($":{personalAccessToken}"));
+                httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authValue);
+                _logger.LogInformation("🔑 Using Personal Access Token for FeatureManagement API authentication");
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ No authentication token available for FeatureManagement API. API calls may fail.");
             }
             
-            _logger.LogInformation("💡 Alternative service configuration approach completed");
+            foreach (var service in serviceStates)
+            {
+                var serviceName = service.Key;
+                var isEnabled = service.Value;
+                var statusEmoji = isEnabled ? "🟢" : "🔴";
+                var action = isEnabled ? "enable" : "disable";
+                
+                _logger.LogInformation("{Emoji} Attempting to {Action} {ServiceName} service using FeatureManagement API", statusEmoji, action, serviceName);
+                
+                try
+                {
+                    if (serviceFeatureMap.ContainsKey(serviceName))
+                    {
+                        var featureId = serviceFeatureMap[serviceName];
+                        
+                        // Build the FeatureManagement API URL
+                        var apiUrl = $"{baseUrl}/_apis/FeatureManagement/FeatureStates/host/project/{projectId}/{featureId}?api-version=4.1-preview.1";
+                        
+                        // Create the request body (state: 0 = disabled, 1 = enabled)
+                        var requestBody = new
+                        {
+                            featureId = featureId,
+                            scope = new
+                            {
+                                settingScope = "project",
+                                userScoped = false
+                            },
+                            state = isEnabled ? 1 : 0
+                        };
+                        
+                        var jsonContent = JsonSerializer.Serialize(requestBody);
+                        var httpContent = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+                        
+                        _logger.LogInformation("🌐 PATCH {ApiUrl}", apiUrl);
+                        _logger.LogInformation("📄 Request: {JsonContent}", jsonContent);
+                        
+                        var response = await httpClient.PatchAsync(apiUrl, httpContent);
+                        
+                        if (response.IsSuccessStatusCode)
+                        {
+                            var responseContent = await response.Content.ReadAsStringAsync();
+                            _logger.LogInformation("✅ Successfully {Action}d {ServiceName} service (Feature: {FeatureId})", action, serviceName, featureId);
+                            _logger.LogInformation("📥 Response: {ResponseContent}", responseContent);
+                            appliedCount++;
+                        }
+                        else
+                        {
+                            var errorContent = await response.Content.ReadAsStringAsync();
+                            _logger.LogWarning("⚠️ Failed to {Action} {ServiceName} service. Status: {StatusCode}, Error: {ErrorContent}", 
+                                action, serviceName, response.StatusCode, errorContent);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("⚠️ No FeatureManagement mapping found for {ServiceName}", serviceName);
+                    }
+                }
+                catch (Exception serviceEx)
+                {
+                    _logger.LogWarning(serviceEx, "⚠️ Could not configure {ServiceName} via FeatureManagement API: {Error}", serviceName, serviceEx.Message);
+                }
+            }
+            
+            if (appliedCount > 0)
+            {
+                _logger.LogInformation("� Applying {Count} service capability configurations...", appliedCount);
+                
+                try
+                {
+                    // Add delay for changes to propagate
+                    await Task.Delay(5000);
+                    
+                    // Verify the applied changes
+                    await VerifyAppliedServiceStates(connection, projectId, serviceStates);
+                }
+                catch (Exception updateEx)
+                {
+                    _logger.LogWarning(updateEx, "⚠️ Could not update project capabilities: {Error}", updateEx.Message);
+                    await LogServiceConfigurationInstructions(serviceStates);
+                }
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ No service configurations could be applied via FeatureManagement API");
+                await LogServiceConfigurationInstructions(serviceStates);
+            }
+            
+            _logger.LogInformation("💡 FeatureManagement API service configuration completed");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "⚠️ Alternative service configuration approach failed");
+            _logger.LogWarning(ex, "⚠️ FeatureManagement API service configuration failed");
+            await LogServiceConfigurationInstructions(serviceStates);
         }
+    }
+
+    private async Task VerifyAppliedServiceStates(VssConnection connection, string projectId, Dictionary<string, bool> expectedStates)
+    {
+        try
+        {
+            _logger.LogInformation("🔍 Verifying applied service states...");
+            
+            var projectClient = connection.GetClient<ProjectHttpClient>();
+            var updatedProject = await projectClient.GetProject(projectId, includeCapabilities: true);
+            
+            if (updatedProject.Capabilities != null)
+            {
+                var serviceCapabilityMap = new Dictionary<string, string>
+                {
+                    { "Boards", "processTemplate" },
+                    { "Repos", "versioncontrol" },
+                    { "Pipelines", "ms.vss-build.pipelines" },
+                    { "Test Plans", "ms.vss-test-web.test" },
+                    { "Artifacts", "ms.vss-features.artifacts" },
+                    { "Dashboards", "ms.vss-dashboards-web.dashboards" },
+                    { "Wiki", "ms.vss-wiki.wiki" }
+                };
+                
+                var allMatched = true;
+                
+                foreach (var expectedState in expectedStates)
+                {
+                    var serviceName = expectedState.Key;
+                    var expectedEnabled = expectedState.Value;
+                    
+                    if (serviceCapabilityMap.ContainsKey(serviceName))
+                    {
+                        var capabilityKey = serviceCapabilityMap[serviceName];
+                        if (updatedProject.Capabilities.ContainsKey(capabilityKey))
+                        {
+                            var actualEnabled = DetermineServiceEnabledState(updatedProject.Capabilities[capabilityKey]);
+                            var matchEmoji = actualEnabled == expectedEnabled ? "✅" : "❌";
+                            var expectedText = expectedEnabled ? "ENABLED" : "DISABLED";
+                            var actualText = actualEnabled ? "ENABLED" : "DISABLED";
+                            
+                            _logger.LogInformation("{Emoji} {ServiceName}: Expected {Expected}, Actual {Actual}", 
+                                matchEmoji, serviceName, expectedText, actualText);
+                                
+                            if (actualEnabled != expectedEnabled)
+                            {
+                                allMatched = false;
+                                _logger.LogWarning("⚠️ SERVICE MISMATCH: {ServiceName} state does not match source project", serviceName);
+                                
+                                // Log the capability details for debugging
+                                _logger.LogInformation("🔍 {ServiceName} capability details:", serviceName);
+                                foreach (var detail in updatedProject.Capabilities[capabilityKey])
+                                {
+                                    _logger.LogInformation("    └─ {Key}: {Value}", detail.Key, detail.Value);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            allMatched = false;
+                            _logger.LogWarning("⚠️ {ServiceName}: Capability {CapabilityKey} not found in target project", serviceName, capabilityKey);
+                        }
+                    }
+                }
+                
+                if (allMatched)
+                {
+                    _logger.LogInformation("🎉 All service states match source project configuration!");
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ Some service states do not match - manual verification may be required");
+                }
+            }
+            else
+            {
+                _logger.LogWarning("⚠️ Target project has no capabilities - verification not possible");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "⚠️ Could not verify service states");
+        }
+    }
+
+    private async Task LogServiceConfigurationInstructions(Dictionary<string, bool> serviceStates)
+    {
+        _logger.LogInformation("📋 Manual Service Configuration Instructions:");
+        _logger.LogInformation("   Please manually configure the following Azure DevOps services in the target project:");
+        
+        foreach (var service in serviceStates)
+        {
+            var statusEmoji = service.Value ? "✅" : "❌";
+            var statusText = service.Value ? "ENABLE" : "DISABLE";
+            _logger.LogInformation("   {Emoji} {StatusText}: {ServiceName}", statusEmoji, statusText, service.Key);
+        }
+        
+        _logger.LogInformation("   Navigate to Project Settings > Services in Azure DevOps to configure these manually.");
+        await Task.CompletedTask;
     }
 
     private async Task AnalyzeServiceSpecificProperties(VssConnection connection, string projectId, Dictionary<string, Dictionary<string, string>> sourceCapabilities, Dictionary<string, bool> detectedServices)
