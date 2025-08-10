@@ -1,0 +1,409 @@
+@{
+    ViewData["Title"] = "Wizard Status";
+    var wizardRequest = ViewBag.WizardRequest as ProjectWizardRequest;
+    var sourceProject = ViewBag.SourceProject as AdoProject;
+    var targetProject = ViewBag.TargetProject as AdoProject;
+    var operationId = ViewBag.OperationId as string;
+}
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2><i class="fas fa-magic"></i> Element Transfer Status</h2>
+                    <p class="text-muted">
+                        Transferring elements from <strong>@sourceProject?.Name</strong> to <strong>@targetProject?.Name</strong>
+                    </p>
+                </div>
+                <a href="@Url.Action("Index")" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left"></i> Back to Wizard
+                </a>
+            </div>
+
+            <!-- Transfer Summary -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-info-circle"></i> Transfer Summary
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <h6>Source Project:</h6>
+                            <p class="mb-0">
+                                <i class="fas fa-project-diagram"></i>
+                                <strong>@sourceProject?.Name</strong><br>
+                                <small class="text-muted">@sourceProject?.Description</small>
+                            </p>
+                        </div>
+                        <div class="col-md-4">
+                            <h6>Target Project:</h6>
+                            <p class="mb-0">
+                                <i class="fas fa-bullseye"></i>
+                                <strong>@targetProject?.Name</strong><br>
+                                <small class="text-muted">@targetProject?.Description</small>
+                            </p>
+                        </div>
+                        <div class="col-md-4">
+                            <h6>Elements to Transfer:</h6>
+                            <ul class="mb-0">
+                                @if (wizardRequest?.Options.CloneWorkItems == true)
+                                {
+                                    <li><i class="fas fa-tasks"></i> Work Items</li>
+                                }
+                                @if (wizardRequest?.Options.CloneAreaPaths == true)
+                                {
+                                    <li><i class="fas fa-sitemap"></i> Area Paths</li>
+                                }
+                                @if (wizardRequest?.Options.CloneIterationPaths == true)
+                                {
+                                    <li><i class="fas fa-calendar-alt"></i> Iteration Paths</li>
+                                }
+                                @if (wizardRequest?.Options.CloneSecurityGroups == true)
+                                {
+                                    <li><i class="fas fa-users-cog"></i> Security Groups</li>
+                                }
+                                @if (wizardRequest?.Options.CloneWikiPages == true)
+                                {
+                                    <li><i class="fas fa-book"></i> Wiki Pages</li>
+                                }
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress and Status -->
+            <div class="card mb-4" id="progressContainer">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-tasks"></i> Progress
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="progress mb-3" style="height: 25px;">
+                        <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                            0%
+                        </div>
+                    </div>
+                    <div id="currentStep" class="alert alert-info">
+                        <i class="fas fa-clock"></i> Ready to start transfer...
+                    </div>
+                    <p id="progressText" class="text-muted mb-0">Click the button below to begin the transfer process.</p>
+                </div>
+            </div>
+
+            <!-- Results Container (hidden initially) -->
+            <div id="resultsContainer" style="display: none;">
+                <!-- Success Result -->
+                <div id="successResult" class="card border-success mb-4" style="display: none;">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0">
+                            <i class="fas fa-check-circle"></i> Transfer Completed Successfully!
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="successDetails">
+                            <!-- Success details will be populated here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Error Result -->
+                <div id="errorResult" class="card border-danger mb-4" style="display: none;">
+                    <div class="card-header bg-danger text-white">
+                        <h5 class="mb-0">
+                            <i class="fas fa-exclamation-triangle"></i> Transfer Failed
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p>The transfer operation encountered an error:</p>
+                        <div id="errorDetails" class="alert alert-danger">
+                            <!-- Error details will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Steps Display -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Transfer Steps</h5>
+                </div>
+                <div class="card-body">
+                    <div id="stepsContainer">
+                        <div class="timeline">
+                            <!-- Steps will be populated dynamically -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-4">
+                <button id="startWizardBtn" type="button" class="btn btn-primary btn-lg">
+                    <i class="fas fa-play"></i> Start Element Transfer
+                </button>
+                <a href="@Url.Action("Index")" class="btn btn-secondary btn-lg">
+                    <i class="fas fa-arrow-left"></i> Back to Wizard
+                </a>
+                <div id="wizardCompleteActions" style="display: none;" class="mt-3">
+                    <a id="viewTargetProjectBtn" href="#" class="btn btn-success" target="_blank">
+                        <i class="fas fa-external-link-alt"></i> View Target Project
+                    </a>
+                    <a href="@Url.Action("Index")" class="btn btn-primary">
+                        <i class="fas fa-magic"></i> Run Another Transfer
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function() {
+            var wizardRequest = @Html.Raw(Json.Serialize(wizardRequest));
+            var operationId = '@operationId';
+            var isWizardStarted = false;
+            var wizardResult = null;
+
+            $('#startWizardBtn').click(function() {
+                if (isWizardStarted) return;
+                
+                isWizardStarted = true;
+                $(this).prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Transferring...');
+                
+                startWizardOperation();
+            });
+
+            function startWizardOperation() {
+                updateProgress(0, 'Starting element transfer...');
+                updateCurrentStep('info', 'Initiating transfer operation...');
+
+                // Add the operation ID to the request
+                wizardRequest.OperationId = operationId;
+
+                $.ajax({
+                    url: '@Url.Action("ExecuteWizard")',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify(wizardRequest),
+                    success: function(response) {
+                        if (response.success) {
+                            handleWizardSuccess(response.result);
+                        } else {
+                            // Check if this is a validation error
+                            if (response.isValidationError) {
+                                handleValidationError(response.message || 'Project validation failed');
+                            } else {
+                                handleWizardError(response.message || 'Unknown error occurred');
+                            }
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        handleWizardError('Network error: ' + error);
+                    }
+                });
+            }
+
+            function handleWizardSuccess(result) {
+                wizardResult = result;
+                updateProgress(100, 'Transfer completed successfully!');
+                updateCurrentStep('success', 'Element transfer completed successfully');
+                
+                $('#progressContainer').hide();
+                $('#successResult').show();
+                $('#resultsContainer').show();
+                
+                var details = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Transfer Summary:</h6>
+                            <ul class="mb-0">
+                                <li><strong>Duration:</strong> ${formatDuration(result.duration)}</li>
+                                <li><strong>Steps Completed:</strong> ${result.completedSteps}/${result.totalSteps}</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Elements Transferred:</h6>
+                            <ul class="mb-0">
+                                <li><strong>Work Items:</strong> ${result.workItemsCloned || 0}</li>
+                                <li><strong>Area Paths:</strong> ${result.areaPathsCloned || 0}</li>
+                                <li><strong>Iteration Paths:</strong> ${result.iterationPathsCloned || 0}</li>
+                                <li><strong>Security Groups:</strong> ${result.securityGroupsCloned || 0}</li>
+                                <li><strong>Wiki Pages:</strong> ${result.wikiPagesCloned || 0}</li>
+                            </ul>
+                        </div>
+                    </div>
+                `;
+                $('#successDetails').html(details);
+                
+                $('#wizardCompleteActions').show();
+                displaySteps(result.steps);
+            }
+
+            function handleWizardError(error) {
+                updateProgress(100, 'Transfer failed');
+                updateCurrentStep('danger', 'Transfer operation failed');
+                
+                $('#progressContainer').hide();
+                $('#errorResult').show();
+                $('#resultsContainer').show();
+                
+                $('#errorDetails').html('<code>' + error + '</code>');
+                $('#startWizardBtn').prop('disabled', false).html('<i class="fas fa-redo"></i> Retry Transfer');
+                isWizardStarted = false;
+            }
+
+            function handleValidationError(error) {
+                updateProgress(100, 'Validation failed');
+                updateCurrentStep('warning', 'Project validation failed');
+                
+                $('#progressContainer').hide();
+                $('#errorResult').show();
+                $('#resultsContainer').show();
+                
+                var validationMessage = `
+                    <div class="alert alert-warning">
+                        <h6><i class="fas fa-exclamation-triangle"></i> Project Validation Error</h6>
+                        <p>${error}</p>
+                        <hr>
+                        <h6>Common Solutions:</h6>
+                        <ul>
+                            <li>Verify that both source and target projects exist in your Azure DevOps organization</li>
+                            <li>Check that you have permission to access both projects</li>
+                            <li>Ensure your Personal Access Token has the required permissions</li>
+                            <li>Try refreshing the project list and selecting different projects</li>
+                        </ul>
+                    </div>
+                `;
+                $('#errorDetails').html(validationMessage);
+                
+                // Different button text for validation errors
+                $('#startWizardBtn').prop('disabled', false).html('<i class="fas fa-arrow-left"></i> Back to Project Selection');
+                $('#startWizardBtn').off('click').on('click', function() {
+                    window.location.href = '@Url.Action("Index")';
+                });
+                isWizardStarted = false;
+            }
+
+            function updateProgress(percentage, text) {
+                $('#progressBar').css('width', percentage + '%').attr('aria-valuenow', percentage);
+                $('#progressBar').text(percentage + '%');
+                $('#progressText').text(text);
+            }
+
+            function updateCurrentStep(type, message) {
+                var alertClass = 'alert-info';
+                var icon = 'fas fa-spinner fa-spin';
+                
+                switch(type) {
+                    case 'success':
+                        alertClass = 'alert-success';
+                        icon = 'fas fa-check-circle';
+                        break;
+                    case 'danger':
+                        alertClass = 'alert-danger';
+                        icon = 'fas fa-times-circle';
+                        break;
+                    case 'warning':
+                        alertClass = 'alert-warning';
+                        icon = 'fas fa-exclamation-triangle';
+                        break;
+                }
+                
+                $('#currentStep').removeClass().addClass('alert ' + alertClass)
+                    .html(`<i class="${icon}"></i> ${message}`);
+            }
+
+            function displaySteps(steps) {
+                var stepsHtml = '';
+                
+                steps.forEach(function(step, index) {
+                    var iconClass = step.success ? 'fas fa-check-circle text-success' : 'fas fa-times-circle text-danger';
+                    var duration = formatDuration(step.duration);
+                    
+                    stepsHtml += `
+                        <div class="timeline-item">
+                            <div class="timeline-marker">
+                                <i class="${iconClass}"></i>
+                            </div>
+                            <div class="timeline-content">
+                                <h6>${step.stepName}</h6>
+                                <p class="mb-1">${step.message}</p>
+                                <small class="text-muted">Duration: ${duration}</small>
+                                ${step.error ? `<div class="text-danger small mt-1">Error: ${step.error}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                $('#stepsContainer .timeline').html(stepsHtml);
+            }
+
+            function formatDuration(duration) {
+                // Duration format: "00:01:23.456" (hours:minutes:seconds.milliseconds)
+                if (!duration) return 'Unknown';
+                
+                var parts = duration.split(':');
+                if (parts.length >= 3) {
+                    var hours = parseInt(parts[0]);
+                    var minutes = parseInt(parts[1]);
+                    var seconds = parseFloat(parts[2]);
+                    
+                    if (hours > 0) {
+                        return `${hours}h ${minutes}m ${Math.round(seconds)}s`;
+                    } else if (minutes > 0) {
+                        return `${minutes}m ${Math.round(seconds)}s`;
+                    } else {
+                        return `${seconds.toFixed(1)}s`;
+                    }
+                }
+                return duration;
+            }
+        });
+    </script>
+    
+    <style>
+        .timeline {
+            position: relative;
+            padding-left: 30px;
+        }
+        
+        .timeline-item {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        
+        .timeline-marker {
+            position: absolute;
+            left: -30px;
+            top: 0;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: -20px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: #dee2e6;
+        }
+        
+        .timeline-content {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 3px solid #007bff;
+        }
+    </style>
+}

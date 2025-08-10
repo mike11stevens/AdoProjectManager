@@ -17,6 +17,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 builder.Services.AddScoped<IAdoService, AdoServiceWorking>();
 builder.Services.AddScoped<IProjectCloneService, ProjectCloneService>();
+builder.Services.AddScoped<IProjectWizardService, ProjectWizardService>();
 
 // Add logging
 builder.Logging.AddConsole();

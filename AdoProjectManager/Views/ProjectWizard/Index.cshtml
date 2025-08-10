@@ -1,0 +1,246 @@
+@model ProjectWizardRequest
+@{
+    ViewData["Title"] = "Project Elements Wizard";
+}
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-md-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2><i class="fas fa-magic"></i> Project Elements Wizard</h2>
+                    <p class="text-muted">Clone specific elements from one project to another</p>
+                </div>
+                <a href="@Url.Action("Index", "ProjectClone")" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left"></i> Back to Project Clone
+                </a>
+            </div>
+
+            @if (TempData["Error"] != null)
+            {
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    @TempData["Error"]
+                </div>
+            }
+
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-cog"></i> Configure Element Transfer
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <form asp-action="Execute" method="post">
+                        <div class="row">
+                            <!-- Source Project Selection -->
+                            <div class="col-md-6">
+                                <div class="form-group mb-3">
+                                    <label asp-for="SourceProjectId" class="form-label">
+                                        <i class="fas fa-project-diagram"></i> Source Project
+                                    </label>
+                                    <select asp-for="SourceProjectId" class="form-select" required>
+                                        <option value="">-- Select Source Project --</option>
+                                        @foreach (var project in Model.AvailableProjects)
+                                        {
+                                            <option value="@project.Id">@project.Name</option>
+                                        }
+                                    </select>
+                                    <span asp-validation-for="SourceProjectId" class="text-danger"></span>
+                                    <div class="form-text">The project to copy elements from</div>
+                                </div>
+                            </div>
+
+                            <!-- Target Project Selection -->
+                            <div class="col-md-6">
+                                <div class="form-group mb-3">
+                                    <label asp-for="TargetProjectId" class="form-label">
+                                        <i class="fas fa-bullseye"></i> Target Project
+                                    </label>
+                                    <select asp-for="TargetProjectId" class="form-select" required>
+                                        <option value="">-- Select Target Project --</option>
+                                        @foreach (var project in Model.AvailableProjects)
+                                        {
+                                            <option value="@project.Id">@project.Name</option>
+                                        }
+                                    </select>
+                                    <span asp-validation-for="TargetProjectId" class="text-danger"></span>
+                                    <div class="form-text">The project to copy elements to</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <!-- Options Selection -->
+                        <h6 class="mb-3">
+                            <i class="fas fa-list-check"></i> Elements to Clone
+                        </h6>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card h-100">
+                                    <div class="card-header bg-light">
+                                        <h6 class="mb-0">Work Items & Structure</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="form-check mb-2">
+                                            <input asp-for="Options.CloneWorkItems" class="form-check-input" type="checkbox" />
+                                            <label asp-for="Options.CloneWorkItems" class="form-check-label">
+                                                <i class="fas fa-tasks"></i> Work Items
+                                            </label>
+                                            <div class="form-text">Copy all work items (User Stories, Tasks, Bugs, etc.)</div>
+                                        </div>
+                                        
+                                        <div class="form-check mb-2">
+                                            <input asp-for="Options.CloneAreaPaths" class="form-check-input" type="checkbox" />
+                                            <label asp-for="Options.CloneAreaPaths" class="form-check-label">
+                                                <i class="fas fa-sitemap"></i> Area Paths
+                                            </label>
+                                            <div class="form-text">Copy area path structure</div>
+                                        </div>
+                                        
+                                        <div class="form-check mb-2">
+                                            <input asp-for="Options.CloneIterationPaths" class="form-check-input" type="checkbox" />
+                                            <label asp-for="Options.CloneIterationPaths" class="form-check-label">
+                                                <i class="fas fa-calendar-alt"></i> Iteration Paths
+                                            </label>
+                                            <div class="form-text">Copy iteration/sprint structure</div>
+                                        </div>
+                                        
+                                        <div class="form-check">
+                                            <input asp-for="Options.IncludeWorkItemHistory" class="form-check-input" type="checkbox" />
+                                            <label asp-for="Options.IncludeWorkItemHistory" class="form-check-label">
+                                                <i class="fas fa-history"></i> Include History
+                                            </label>
+                                            <div class="form-text">Include work item history and comments</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="card h-100">
+                                    <div class="card-header bg-light">
+                                        <h6 class="mb-0">Security & Documentation</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="form-check mb-2">
+                                            <input asp-for="Options.CloneSecurityGroups" class="form-check-input" type="checkbox" />
+                                            <label asp-for="Options.CloneSecurityGroups" class="form-check-label">
+                                                <i class="fas fa-users-cog"></i> Security Groups
+                                            </label>
+                                            <div class="form-text">Copy project security groups and their members</div>
+                                        </div>
+                                        
+                                        <div class="form-check mb-2">
+                                            <input asp-for="Options.CloneWikiPages" class="form-check-input" type="checkbox" />
+                                            <label asp-for="Options.CloneWikiPages" class="form-check-label">
+                                                <i class="fas fa-book"></i> Wiki Pages
+                                            </label>
+                                            <div class="form-text">Copy all wiki pages and their structure</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <!-- Action Buttons -->
+                        <div class="d-flex justify-content-between">
+                            <a href="@Url.Action("Index", "Home")" class="btn btn-secondary">
+                                <i class="fas fa-times"></i> Cancel
+                            </a>
+                            
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="fas fa-magic"></i> Start Element Transfer
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Help Information -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="fas fa-info-circle"></i> Important Information
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>What this wizard does:</h6>
+                            <ul class="mb-0">
+                                <li>Copies selected elements from source to target project</li>
+                                <li>Both projects must already exist</li>
+                                <li>Preserves original data in source project</li>
+                                <li>Handles duplicate names appropriately</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Important notes:</h6>
+                            <ul class="mb-0">
+                                <li>Large transfers may take several minutes</li>
+                                <li>Work item relationships will be updated</li>
+                                <li>Security group permissions may need manual adjustment</li>
+                                <li>Wiki pages will maintain their hierarchy</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        $(document).ready(function() {
+            // Prevent selecting the same project for source and target
+            $('#SourceProjectId, #TargetProjectId').change(function() {
+                var sourceId = $('#SourceProjectId').val();
+                var targetId = $('#TargetProjectId').val();
+                
+                if (sourceId && targetId && sourceId === targetId) {
+                    alert('Source and target projects cannot be the same. Please select different projects.');
+                    $(this).val('');
+                }
+            });
+
+            // Form validation
+            $('form').submit(function(e) {
+                var sourceId = $('#SourceProjectId').val();
+                var targetId = $('#TargetProjectId').val();
+                
+                if (!sourceId || !targetId) {
+                    alert('Please select both source and target projects.');
+                    e.preventDefault();
+                    return false;
+                }
+                
+                if (sourceId === targetId) {
+                    alert('Source and target projects must be different.');
+                    e.preventDefault();
+                    return false;
+                }
+                
+                // Check if at least one option is selected
+                var hasSelection = $('#Options_CloneWorkItems').is(':checked') ||
+                                 $('#Options_CloneSecurityGroups').is(':checked') ||
+                                 $('#Options_CloneWikiPages').is(':checked') ||
+                                 $('#Options_CloneAreaPaths').is(':checked') ||
+                                 $('#Options_CloneIterationPaths').is(':checked');
+                
+                if (!hasSelection) {
+                    alert('Please select at least one element to clone.');
+                    e.preventDefault();
+                    return false;
+                }
+                
+                return true;
+            });
+        });
+    </script>
+}
