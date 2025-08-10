@@ -18,6 +18,7 @@ using Microsoft.VisualStudio.Services.Security.Client;
 using Microsoft.VisualStudio.Services.Graph.Client;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Text;
 
 namespace AdoProjectManager.Services;
@@ -2033,6 +2034,15 @@ public class ProjectCloneService : IProjectCloneService
         {
             var sourceWitClient = sourceConn.GetClient<WorkItemTrackingHttpClient>();
             var targetWitClient = targetConn.GetClient<WorkItemTrackingHttpClient>();
+            
+            // Get project details for WIQL transformation
+            var sourceProjectClient = sourceConn.GetClient<ProjectHttpClient>();
+            var targetProjectClient = targetConn.GetClient<ProjectHttpClient>();
+            var sourceProject = await sourceProjectClient.GetProject(sourceProjectId);
+            var targetProject = await targetProjectClient.GetProject(targetProjectId);
+            
+            _logger.LogInformation("🔄 Preparing query transformation from '{SourceProject}' to '{TargetProject}'", 
+                sourceProject.Name, targetProject.Name);
 
             // Get all queries from source project with maximum supported depth
             var queryHierarchy = await sourceWitClient.GetQueriesAsync(sourceProjectId, QueryExpand.All, depth: 2);
@@ -2050,7 +2060,7 @@ public class ProjectCloneService : IProjectCloneService
                 
                 progress?.Report("📁 Processing Shared Queries folder...");
                 
-                var sharedQueriesCloned = await ProcessSharedQueriesFolderOnly(targetWitClient, targetProjectId, sharedQueriesFolder, progress);
+                var sharedQueriesCloned = await ProcessSharedQueriesFolderOnly(targetWitClient, targetProjectId, sharedQueriesFolder, sourceProject.Name, targetProject.Name, progress);
                 clonedCount += sharedQueriesCloned;
                 _logger.LogInformation("✅ Cloned {Count} items from Shared Queries", sharedQueriesCloned);
             }
@@ -2090,7 +2100,7 @@ public class ProjectCloneService : IProjectCloneService
         }
     }
 
-    private async Task<int> ProcessSharedQueriesFolderOnly(WorkItemTrackingHttpClient client, string projectId, QueryHierarchyItem sharedFolder, IProgress<string>? progress)
+    private async Task<int> ProcessSharedQueriesFolderOnly(WorkItemTrackingHttpClient client, string projectId, QueryHierarchyItem sharedFolder, string sourceProjectName, string targetProjectName, IProgress<string>? progress)
     {
         var clonedCount = 0;
         
@@ -2103,13 +2113,70 @@ public class ProjectCloneService : IProjectCloneService
         _logger.LogInformation("📂 Processing {ChildCount} items in Shared Queries", sharedFolder.Children.Count());
         
         // Process all items recursively
-        clonedCount = await ProcessQueryHierarchyRecursively(client, projectId, sharedFolder.Children, "Shared Queries", progress);
+        clonedCount = await ProcessQueryHierarchyRecursively(client, projectId, sharedFolder.Children, "Shared Queries", sourceProjectName, targetProjectName, progress);
         
         return clonedCount;
     }
 
+    private string TransformWiqlForTargetProject(string originalWiql, string sourceProjectName, string targetProjectName)
+    {
+        if (string.IsNullOrEmpty(originalWiql))
+            return originalWiql;
+
+        _logger.LogInformation("🔄 Transforming WIQL from source project '{SourceProject}' to target project '{TargetProject}'", 
+            sourceProjectName, targetProjectName);
+        
+        var transformedWiql = originalWiql;
+        
+        // 1. Replace explicit project references in [Team Project] field
+        // Pattern: [Team Project] = 'SourceProjectName'
+        var teamProjectPattern = @"\[Team Project\]\s*=\s*['""]" + Regex.Escape(sourceProjectName) + @"['""]";
+        var teamProjectReplacement = $"[Team Project] = '{targetProjectName}'";
+        transformedWiql = Regex.Replace(transformedWiql, teamProjectPattern, teamProjectReplacement, RegexOptions.IgnoreCase);
+        
+        // 2. Replace project references in area path constraints
+        // Pattern: [Area Path] UNDER 'SourceProjectName' or [Area Path] = 'SourceProjectName'
+        var areaPathUnderPattern = @"\[Area Path\]\s+(UNDER|=)\s*['""]" + Regex.Escape(sourceProjectName) + @"['""]";
+        var areaPathUnderReplacement = $"[Area Path] $1 '{targetProjectName}'";
+        transformedWiql = Regex.Replace(transformedWiql, areaPathUnderPattern, areaPathUnderReplacement, RegexOptions.IgnoreCase);
+        
+        // 3. Replace project references in iteration path constraints
+        // Pattern: [Iteration Path] UNDER 'SourceProjectName' or [Iteration Path] = 'SourceProjectName'
+        var iterationPathUnderPattern = @"\[Iteration Path\]\s+(UNDER|=)\s*['""]" + Regex.Escape(sourceProjectName) + @"['""]";
+        var iterationPathUnderReplacement = $"[Iteration Path] $1 '{targetProjectName}'";
+        transformedWiql = Regex.Replace(transformedWiql, iterationPathUnderPattern, iterationPathUnderReplacement, RegexOptions.IgnoreCase);
+        
+        // 4. Replace any remaining bare project name references (be more careful with this)
+        // Only replace if it's quoted and appears to be a project reference
+        var bareProjectPattern = @"['""]" + Regex.Escape(sourceProjectName) + @"['""]";
+        var bareProjectReplacement = $"'{targetProjectName}'";
+        transformedWiql = Regex.Replace(transformedWiql, bareProjectPattern, bareProjectReplacement, RegexOptions.IgnoreCase);
+        
+        // 5. Remove or fix any cross-project query flags
+        // Remove "Query across projects" or similar flags if they exist
+        transformedWiql = Regex.Replace(transformedWiql, @"@@project\s*=\s*['""][^'""]*['""]", "", RegexOptions.IgnoreCase);
+        
+        // Log the transformation
+        if (!string.Equals(originalWiql, transformedWiql, StringComparison.Ordinal))
+        {
+            _logger.LogInformation("✅ WIQL transformed successfully - project references updated from '{SourceProject}' to '{TargetProject}'", 
+                sourceProjectName, targetProjectName);
+            _logger.LogInformation("🔍 Original WIQL (first 200 chars): {OriginalWiql}", 
+                originalWiql.Length > 200 ? originalWiql.Substring(0, 200) + "..." : originalWiql);
+            _logger.LogInformation("🎯 Transformed WIQL (first 200 chars): {TransformedWiql}", 
+                transformedWiql.Length > 200 ? transformedWiql.Substring(0, 200) + "..." : transformedWiql);
+        }
+        else
+        {
+            _logger.LogInformation("ℹ️ No project references found in WIQL for '{SourceProject}' - no transformation needed", sourceProjectName);
+            _logger.LogDebug("📝 WIQL content: {WiqlContent}", originalWiql);
+        }
+        
+        return transformedWiql;
+    }
+
     private async Task<int> ProcessQueryHierarchyRecursively(WorkItemTrackingHttpClient client, string projectId, 
-        IEnumerable<QueryHierarchyItem> items, string parentPath, IProgress<string>? progress)
+        IEnumerable<QueryHierarchyItem> items, string parentPath, string sourceProjectName, string targetProjectName, IProgress<string>? progress)
     {
         var clonedCount = 0;
         
@@ -2132,11 +2199,20 @@ public class ProjectCloneService : IProjectCloneService
                 _logger.LogInformation("📝 Attempting to clone query: '{QueryName}' to path '{ParentPath}' with WIQL length: {WiqlLength}", item.Name, parentPath, item.Wiql.Length);
                 progress?.Report($"📝 Cloning query: {item.Name} to {parentPath}");
                 
+                // Transform WIQL to reference target project instead of source project
+                _logger.LogInformation("🔄 About to transform WIQL for query '{QueryName}' from '{SourceProject}' to '{TargetProject}'", 
+                    item.Name, sourceProjectName, targetProjectName);
+                _logger.LogDebug("📋 Original WIQL: {OriginalWiql}", item.Wiql);
+                
+                var transformedWiql = TransformWiqlForTargetProject(item.Wiql, sourceProjectName, targetProjectName);
+                
+                _logger.LogInformation("✅ WIQL transformation completed for query '{QueryName}'", item.Name);
+                
                 // Create the query object - declare outside try blocks so it can be reused
                 var newQuery = new QueryHierarchyItem
                 {
                     Name = item.Name,
-                    Wiql = item.Wiql,
+                    Wiql = transformedWiql,
                     IsPublic = item.IsPublic,
                     IsFolder = false
                 };
@@ -2204,7 +2280,7 @@ public class ProjectCloneService : IProjectCloneService
                         var newFolderPath = $"{parentPath}/{item.Name}";
                         _logger.LogInformation("� Recursively processing {SubChildCount} items in subfolder '{FolderName}' (path: '{NewFolderPath}')", item.Children.Count(), item.Name, newFolderPath);
                         
-                        var subClonedCount = await ProcessQueryHierarchyRecursively(client, projectId, item.Children, newFolderPath, progress);
+                        var subClonedCount = await ProcessQueryHierarchyRecursively(client, projectId, item.Children, newFolderPath, sourceProjectName, targetProjectName, progress);
                         clonedCount += subClonedCount;
                         _logger.LogInformation("✅ Completed processing subfolder '{FolderName}': {SubClonedCount} items cloned", item.Name, subClonedCount);
                     }

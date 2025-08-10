@@ -70,6 +70,8 @@ public class ProjectWizardService : IProjectWizardService
 
         try
         {
+            // Note: For now, both connections use the same organization URL from settings
+            // In a cross-organization scenario, you would need separate settings for source and target
             var sourceConn = new VssConnection(new Uri(settings.OrganizationUrl), new VssBasicCredential(string.Empty, settings.PersonalAccessToken));
             var targetConn = new VssConnection(new Uri(settings.OrganizationUrl), new VssBasicCredential(string.Empty, settings.PersonalAccessToken));
 
@@ -83,6 +85,15 @@ public class ProjectWizardService : IProjectWizardService
             
             _logger.LogInformation("✅ Source project validated: {SourceProject}", sourceProject.Name);
             _logger.LogInformation("✅ Target project validated: {TargetProject}", targetProject.Name);
+
+            // Validate that source and target are not the same project
+            if (request.SourceProjectId.Equals(request.TargetProjectId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Source and target projects cannot be the same. Please select different projects for cloning.");
+            }
+
+            _logger.LogInformation("📊 Organization Context: {OrganizationUrl}", settings.OrganizationUrl);
+            _logger.LogInformation("🔒 Security: All operations will be scoped to target project context only");
 
             var result = new ProjectWizardResult
             {
@@ -134,8 +145,34 @@ public class ProjectWizardService : IProjectWizardService
         var sourceProject = await sourceProjectClient.GetProject(sourceProjectId);
         var targetProject = await targetProjectClient.GetProject(targetProjectId);
         
-        _logger.LogInformation("📋 Source Project: {SourceProject}", sourceProject.Name);
-        _logger.LogInformation("🎯 Target Project: {TargetProject}", targetProject.Name);
+        _logger.LogInformation("📋 Source Project: {SourceProject} (Org: {SourceOrg})", sourceProject.Name, sourceConn.Uri.Host);
+        _logger.LogInformation("🎯 Target Project: {TargetProject} (Org: {TargetOrg})", targetProject.Name, targetConn.Uri.Host);
+
+        // CRITICAL: Prevent all cross-organization and same-project operations
+        if (sourceConn.Uri.Host.Equals(targetConn.Uri.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            if (sourceProjectId.Equals(targetProjectId, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogError("🚫 SECURITY VIOLATION: Source and target projects are identical. " +
+                    "Cannot copy security groups to the same project.");
+                throw new InvalidOperationException($"Security violation: Cannot copy security groups to the same project. " +
+                    $"Source and target are both '{sourceProject.Name}' (ID: {sourceProjectId}).");
+            }
+            
+            // Same organization but different projects - this is allowed but log it
+            _logger.LogInformation("✅ Same organization, different projects - proceeding with intra-organization copy");
+        }
+        else
+        {
+            // Different organizations - this should be carefully controlled
+            _logger.LogWarning("⚠️ CROSS-ORGANIZATION OPERATION: Copying from {SourceOrg} to {TargetOrg}. " +
+                "Ensure this is intentional and complies with security policies.", 
+                sourceConn.Uri.Host, targetConn.Uri.Host);
+        }
+
+        // ENFORCE: All target operations must use target-project-only scope
+        _logger.LogInformation("🔒 ENFORCING: All target operations will use strict project scope for '{TargetProject}' ONLY", 
+            targetProject.Name);
 
         var defaultGroupNames = new[]
         {
@@ -144,14 +181,16 @@ public class ProjectWizardService : IProjectWizardService
             "Readers"
         };
 
-        _logger.LogInformation("ℹ️ Attempting to retrieve group membership information...");
+        _logger.LogInformation("ℹ️ Retrieving source project group membership information...");
         
         int totalMembersFound = 0;
         bool anyGroupsProcessed = false;
+        var sourceGroupsInfo = new Dictionary<string, GroupInfo>();
 
+        // First, get all source group information
         foreach (var groupName in defaultGroupNames)
         {
-            _logger.LogInformation("👥 Processing group: {GroupName}", groupName);
+            _logger.LogInformation("👥 Processing source group: {GroupName}", groupName);
             
             var groupInfo = await GetBasicGroupInfo(sourceConn, sourceProject, groupName);
             
@@ -159,13 +198,14 @@ public class ProjectWizardService : IProjectWizardService
             {
                 anyGroupsProcessed = true;
                 totalMembersFound += groupInfo.MemberCount;
+                sourceGroupsInfo[groupName] = groupInfo;
                 
-                _logger.LogInformation("✅ Found group '{GroupName}' with {MemberCount} members", 
+                _logger.LogInformation("✅ Found source group '{GroupName}' with {MemberCount} members", 
                     groupName, groupInfo.MemberCount);
                     
                 if (groupInfo.Members.Any())
                 {
-                    _logger.LogInformation("📋 Members in '{GroupName}':", groupName);
+                    _logger.LogInformation("📋 Members in source '{GroupName}':", groupName);
                     foreach (var member in groupInfo.Members)
                     {
                         _logger.LogInformation("   • {MemberName} ({MemberEmail})", member.DisplayName, member.Email);
@@ -174,36 +214,43 @@ public class ProjectWizardService : IProjectWizardService
             }
             else
             {
-                _logger.LogWarning("⚠️ Could not retrieve information for group '{GroupName}'", groupName);
+                _logger.LogWarning("⚠️ Could not retrieve information for source group '{GroupName}'", groupName);
             }
         }
 
         if (anyGroupsProcessed && totalMembersFound > 0)
         {
-            _logger.LogInformation("🎯 Successfully identified {TotalMembers} members across security groups", totalMembersFound);
+            _logger.LogInformation("🎯 Successfully identified {TotalMembers} members across source security groups", totalMembersFound);
             
-            // Now attempt to copy users to target groups
+            // Now validate target groups exist and copy users - using only target connection for target operations
             int copiedMembers = 0;
             
             foreach (var groupName in defaultGroupNames)
             {
-                var sourceGroupInfo = await GetBasicGroupInfo(sourceConn, sourceProject, groupName);
-                if (sourceGroupInfo?.Members.Any() == true)
+                if (sourceGroupsInfo.ContainsKey(groupName) && sourceGroupsInfo[groupName].Members.Any())
                 {
+                    _logger.LogInformation("🔍 Validating target group '{GroupName}' in target project", groupName);
+                    
+                    // Use ONLY target connection for target group operations
                     var targetGroupInfo = await GetBasicGroupInfo(targetConn, targetProject, groupName);
                     
                     if (targetGroupInfo == null)
                     {
-                        throw new InvalidOperationException($"Could not find target group '{groupName}' in project '{targetProject.Name}'");
+                        throw new InvalidOperationException($"Could not find target group '{groupName}' in target project '{targetProject.Name}'. " +
+                            "Ensure the target project has the standard security groups configured.");
                     }
                     
-                    var membersCopied = await CopyMembersToTargetGroup(targetConn, targetProject, 
-                        sourceGroupInfo, targetGroupInfo);
+                    _logger.LogInformation("✅ Target group '{GroupName}' validated in target project", groupName);
                     
-                    if (membersCopied != sourceGroupInfo.MemberCount)
+                    // Copy members from source to target using target connection only for target operations
+                    var membersCopied = await CopyMembersToTargetGroup(targetConn, targetProject, 
+                        sourceGroupsInfo[groupName], targetGroupInfo);
+                    
+                    if (membersCopied != sourceGroupsInfo[groupName].MemberCount)
                     {
-                        throw new InvalidOperationException($"Failed to copy all members to group '{groupName}'. " +
-                            $"Expected: {sourceGroupInfo.MemberCount}, Copied: {membersCopied}");
+                        throw new InvalidOperationException($"Failed to copy all members to target group '{groupName}'. " +
+                            $"Expected: {sourceGroupsInfo[groupName].MemberCount}, Copied: {membersCopied}. " +
+                            "This may indicate some users don't exist in the target organization or insufficient permissions.");
                     }
                     
                     copiedMembers += membersCopied;
@@ -212,15 +259,15 @@ public class ProjectWizardService : IProjectWizardService
             
             if (copiedMembers > 0)
             {
-                _logger.LogInformation("✅ Successfully copied {CopiedMembers} members to target groups", copiedMembers);
+                _logger.LogInformation("✅ Successfully copied {CopiedMembers} members to target project groups", copiedMembers);
                 return copiedMembers;
             }
             else if (totalMembersFound > 0)
             {
                 // If we found members but couldn't copy them, throw an error
                 throw new InvalidOperationException($"Failed to copy {totalMembersFound} members across security groups. " +
-                    "Automatic copying failed due to insufficient permissions or API limitations. " +
-                    "Please ensure your Azure DevOps token has 'Graph' and 'Project and Team' permissions.");
+                    "Automatic copying failed due to insufficient permissions or users not existing in target organization. " +
+                    "Please ensure your Azure DevOps token has 'Graph' and 'Project and Team' permissions for the target organization.");
             }
             else
             {
@@ -245,7 +292,8 @@ public class ProjectWizardService : IProjectWizardService
                           $"• Source Project: {sourceProject.Name} (ID: {sourceProjectId})\n" +
                           $"• Target Project: {targetProject.Name} (ID: {targetProjectId})\n" +
                           $"• Organization URL: {sourceConn.Uri}\n" +
-                          $"• Groups Processed: {string.Join(", ", defaultGroupNames)}";
+                          $"• Groups Processed: {string.Join(", ", defaultGroupNames)}\n" +
+                          $"• Target Context: All operations scoped to target project only";
 
             throw new InvalidOperationException($"Failed to retrieve security group information from source project '{sourceProject.Name}'. " +
                 $"This typically indicates insufficient Azure DevOps token permissions.\n\n{tokenInfo}");
@@ -258,25 +306,46 @@ public class ProjectWizardService : IProjectWizardService
         {
             var graphClient = connection.GetClient<GraphHttpClient>();
             
-            _logger.LogInformation("🔍 Attempting to get security information for group '{GroupName}' in project '{ProjectName}'", groupName, project.Name);
+            _logger.LogInformation("🔍 Attempting to get security information for group '{GroupName}' in project '{ProjectName}' (ID: {ProjectId})", 
+                groupName, project.Name, project.Id);
             
-            // Test basic Graph API access first
+            // Test basic Graph API access first with STRICT project scoping
             PagedGraphGroups groups;
             try
             {
-                groups = await graphClient.ListGroupsAsync(scopeDescriptor: $"scp.{project.Id}");
+                // IMPORTANT: Explicitly scope to THIS PROJECT ONLY - no cross-project queries allowed
+                var projectScopeDescriptor = $"scp.{project.Id}";
+                _logger.LogInformation("🔒 Using strict project scope: {ScopeDescriptor} for project {ProjectName}", 
+                    projectScopeDescriptor, project.Name);
+                
+                groups = await graphClient.ListGroupsAsync(scopeDescriptor: projectScopeDescriptor);
                 var groupCount = groups.GraphGroups?.Count() ?? 0;
-                _logger.LogInformation("✅ Successfully retrieved {GroupCount} groups from Graph API", groupCount);
+                _logger.LogInformation("✅ Successfully retrieved {GroupCount} groups from Graph API for project {ProjectName} ONLY", 
+                    groupCount, project.Name);
+                
+                // Validate that we're getting groups from the correct project only
+                if (groups.GraphGroups != null)
+                {
+                    foreach (var group in groups.GraphGroups.Take(3)) // Check first few groups
+                    {
+                        if (group.PrincipalName != null && !group.PrincipalName.Contains(project.Name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogWarning("⚠️ Potential cross-project group detected: {GroupPrincipal} for project {ProjectName}", 
+                                group.PrincipalName, project.Name);
+                        }
+                    }
+                }
             }
             catch (Exception graphEx)
             {
-                _logger.LogError(graphEx, "❌ Failed to access Graph API for project '{ProjectName}'. Error: {Error}", project.Name, graphEx.Message);
+                _logger.LogError(graphEx, "❌ Failed to access Graph API for project '{ProjectName}' (ID: {ProjectId}). Error: {Error}", 
+                    project.Name, project.Id, graphEx.Message);
                 
                 // Check if it's a permission issue
                 if (graphEx.Message.Contains("403") || graphEx.Message.Contains("Forbidden") || 
                     graphEx.Message.Contains("unauthorized") || graphEx.Message.Contains("Access denied"))
                 {
-                    throw new InvalidOperationException($"Insufficient permissions to access Graph API for project '{project.Name}'. " +
+                    throw new InvalidOperationException($"Insufficient permissions to access Graph API for project '{project.Name}' (ID: {project.Id}). " +
                         "Your Azure DevOps Personal Access Token requires the following permissions: " +
                         "• Identity (read) - to read user and group information, " +
                         "• Graph (read/write) - to access security groups and memberships, " +
@@ -285,16 +354,17 @@ public class ProjectWizardService : IProjectWizardService
                 }
                 else if (graphEx.Message.Contains("404") || graphEx.Message.Contains("Not Found"))
                 {
-                    throw new InvalidOperationException($"Project '{project.Name}' not found or not accessible. " +
+                    throw new InvalidOperationException($"Project '{project.Name}' (ID: {project.Id}) not found or not accessible. " +
                         "Verify the project exists and your token has access to it.");
                 }
                 else
                 {
-                    throw new InvalidOperationException($"Graph API error for project '{project.Name}': {graphEx.Message}. " +
+                    throw new InvalidOperationException($"Graph API error for project '{project.Name}' (ID: {project.Id}): {graphEx.Message}. " +
                         "This may indicate a token permission issue or network connectivity problem.");
                 }
             }
                 
+            // Find the specific security group in the TARGET project ONLY
             var targetGroup = groups.GraphGroups?.FirstOrDefault(g => g.PrincipalName?.EndsWith($"\\{groupName}") == true || 
                                                         g.DisplayName == groupName);
             
@@ -303,14 +373,24 @@ public class ProjectWizardService : IProjectWizardService
                 var availableGroups = groups.GraphGroups != null ? 
                     groups.GraphGroups.Take(5).Select(g => g.DisplayName ?? g.PrincipalName ?? "Unknown") :
                     new[] { "None" };
-                _logger.LogWarning("⚠️ Group '{GroupName}' not found in project '{ProjectName}'. Available groups: {AvailableGroups}", 
-                    groupName, project.Name, 
+                _logger.LogWarning("⚠️ Group '{GroupName}' not found in target project '{ProjectName}' (ID: {ProjectId}). Available groups: {AvailableGroups}", 
+                    groupName, project.Name, project.Id, 
                     string.Join(", ", availableGroups));
                 return null;
             }
             
-            _logger.LogInformation("✅ Found target group: '{GroupDisplayName}' (Principal: '{PrincipalName}')", 
-                targetGroup.DisplayName, targetGroup.PrincipalName);
+            // CRITICAL: Validate this group belongs to THIS project only
+            if (targetGroup.PrincipalName != null && 
+                !targetGroup.PrincipalName.Contains(project.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogError("🚫 SECURITY VIOLATION: Group '{GroupName}' with principal '{PrincipalName}' does not belong to target project '{ProjectName}'. " +
+                    "This indicates a cross-project query leak.", groupName, targetGroup.PrincipalName, project.Name);
+                throw new InvalidOperationException($"Cross-project security group detected. Group '{groupName}' with principal '{targetGroup.PrincipalName}' " +
+                    "does not belong to project '{project.Name}'. This violates project isolation requirements.");
+            }
+            
+            _logger.LogInformation("✅ Found target group: '{GroupDisplayName}' (Principal: '{PrincipalName}') - VALIDATED for project '{ProjectName}'", 
+                targetGroup.DisplayName, targetGroup.PrincipalName, project.Name);
             
             var members = new List<GroupMember>();
             try
@@ -369,23 +449,30 @@ public class ProjectWizardService : IProjectWizardService
     {
         int copiedCount = 0;
         
-        _logger.LogInformation("🔄 Attempting to copy {MemberCount} members from '{SourceGroup}' to target project", 
-            sourceGroup.MemberCount, sourceGroup.GroupName);
+        _logger.LogInformation("🔄 Attempting to copy {MemberCount} members from '{SourceGroup}' to target project '{TargetProject}' ONLY", 
+            sourceGroup.MemberCount, sourceGroup.GroupName, targetProject.Name);
         
         var graphClient = targetConnection.GetClient<GraphHttpClient>();
         
+        // CRITICAL: Enforce strict target project scope for ALL operations
+        var targetProjectScopeDescriptor = $"scp.{targetProject.Id}";
+        _logger.LogInformation("🔒 ENFORCING strict target project scope: {ScopeDescriptor}", targetProjectScopeDescriptor);
+        
         foreach (var sourceMember in sourceGroup.Members)
         {
-            var targetUsers = await graphClient.ListUsersAsync();
+            // IMPORTANT: Only list users within the TARGET project scope
+            var targetUsers = await graphClient.ListUsersAsync(scopeDescriptor: targetProjectScopeDescriptor);
             var targetUser = targetUsers.GraphUsers.FirstOrDefault(u => 
                 u.MailAddress?.Equals(sourceMember.Email, StringComparison.OrdinalIgnoreCase) == true ||
                 u.PrincipalName?.Equals(sourceMember.PrincipalName, StringComparison.OrdinalIgnoreCase) == true);
             
             if (targetUser == null)
             {
-                throw new InvalidOperationException($"User '{sourceMember.Email}' not found in target organization");
+                throw new InvalidOperationException($"User '{sourceMember.Email}' not found in target project '{targetProject.Name}' " +
+                    $"(scope: {targetProjectScopeDescriptor}). Users must exist in the target project scope to be added to groups.");
             }
             
+            // Check existing memberships within TARGET project scope only
             var existingMemberships = await graphClient.ListMembershipsAsync(targetUser.Descriptor, 
                 Microsoft.VisualStudio.Services.Graph.GraphTraversalDirection.Up);
             
@@ -393,23 +480,24 @@ public class ProjectWizardService : IProjectWizardService
             
             if (isAlreadyMember)
             {
-                _logger.LogInformation("ℹ️ User '{UserName}' is already a member of '{GroupName}'", 
-                    sourceMember.DisplayName, targetGroup.GroupName);
+                _logger.LogInformation("ℹ️ User '{UserName}' is already a member of '{GroupName}' in target project '{TargetProject}'", 
+                    sourceMember.DisplayName, targetGroup.GroupName, targetProject.Name);
                 copiedCount++;
                 continue;
             }
             
             if (!string.IsNullOrEmpty(targetGroup.GroupDescriptor))
             {
+                // Add membership with explicit target project context
                 await graphClient.AddMembershipAsync(targetUser.Descriptor, targetGroup.GroupDescriptor);
-                _logger.LogInformation("✅ Successfully added '{UserName}' to '{GroupName}'", 
-                    sourceMember.DisplayName, targetGroup.GroupName);
+                _logger.LogInformation("✅ Successfully added '{UserName}' to '{GroupName}' in target project '{TargetProject}'", 
+                    sourceMember.DisplayName, targetGroup.GroupName, targetProject.Name);
                 copiedCount++;
             }
         }
         
-        _logger.LogInformation("📊 Group '{GroupName}': {CopiedCount}/{TotalCount} members copied successfully", 
-            sourceGroup.GroupName, copiedCount, sourceGroup.MemberCount);
+        _logger.LogInformation("📊 Target project '{TargetProject}' - Group '{GroupName}': {CopiedCount}/{TotalCount} members copied successfully", 
+            targetProject.Name, sourceGroup.GroupName, copiedCount, sourceGroup.MemberCount);
         
         return copiedCount;
     }
