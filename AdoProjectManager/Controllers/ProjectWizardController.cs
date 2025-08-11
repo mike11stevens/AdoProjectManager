@@ -1,6 +1,7 @@
 using AdoProjectManager.Models;
 using AdoProjectManager.Services;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 namespace AdoProjectManager.Controllers;
 
@@ -186,6 +187,135 @@ public class ProjectWizardController : Controller
                 success = false, 
                 message = $"Unexpected error: {ex.Message}"
             });
+        }
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> AnalyzeDifferences([FromBody] ProjectWizardRequest request)
+    {
+        try
+        {
+            _logger.LogInformation("ProjectWizard AnalyzeDifferences action called for Source: {SourceId}, Target: {TargetId}", 
+                request.SourceProjectId, request.TargetProjectId);
+
+            var sourceProject = await _adoService.GetProjectByIdAsync(request.SourceProjectId);
+            var targetProject = await _adoService.GetProjectByIdAsync(request.TargetProjectId);
+
+            if (sourceProject == null || targetProject == null)
+            {
+                return Json(new { 
+                    success = false, 
+                    message = "Could not find one or both projects"
+                });
+            }
+
+            var analysis = await _projectWizardService.AnalyzeDifferencesAsync(request.SourceProjectId, request.TargetProjectId);
+
+            _logger.LogInformation("🔍 Analysis results before sending to frontend:");
+            _logger.LogInformation("   • WorkItems.HasChanges: {HasChanges}", analysis.WorkItems.HasChanges);
+            _logger.LogInformation("   • WorkItems.NewItems.Count: {NewCount}", analysis.WorkItems.NewItems.Count);
+            _logger.LogInformation("   • WorkItems.UpdatedItems.Count: {UpdatedCount}", analysis.WorkItems.UpdatedItems.Count);
+            _logger.LogInformation("   • HasAnyDifferences: {HasAnyDifferences}", analysis.HasAnyDifferences);
+
+            var jsonResult = Json(new { 
+                success = true, 
+                sourceProject = new { id = sourceProject.Id, name = sourceProject.Name },
+                targetProject = new { id = targetProject.Id, name = targetProject.Name },
+                differences = analysis
+            });
+
+            // Log the serialized JSON for debugging
+            var jsonString = System.Text.Json.JsonSerializer.Serialize(analysis);
+            _logger.LogInformation("🔍 Serialized analysis JSON length: {Length}", jsonString.Length);
+            _logger.LogInformation("🔍 First 500 chars of JSON: {JsonPreview}", jsonString.Length > 500 ? jsonString.Substring(0, 500) : jsonString);
+
+            return jsonResult;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error analyzing project differences");
+            return Json(new { 
+                success = false, 
+                message = $"Analysis failed: {ex.Message}"
+            });
+        }
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> ApplySelectiveUpdates([FromBody] SelectiveUpdateRequest request)
+    {
+        try
+        {
+            _logger.LogInformation("ProjectWizard ApplySelectiveUpdates action called for Source: {SourceId}, Target: {TargetId}", 
+                request.SourceProjectId, request.TargetProjectId);
+
+            var result = await _projectWizardService.ApplySelectiveUpdatesAsync(request);
+
+            return Json(new { 
+                success = result.Success, 
+                message = result.Success ? "Updates applied successfully" : result.Error,
+                result = result
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error applying selective updates");
+            return Json(new { 
+                success = false, 
+                message = $"Update failed: {ex.Message}"
+            });
+        }
+    }
+
+    [HttpGet]
+    public IActionResult SelectiveUpdates()
+    {
+        // This will be populated by the POST method below
+        return View(new ProjectDifferencesAnalysis());
+    }
+
+    [HttpPost]
+    public IActionResult SelectiveUpdates(string analysis, string sourceProjectId, string targetProjectId)
+    {
+        try
+        {
+            _logger.LogInformation("🔍 SelectiveUpdates POST received:");
+            _logger.LogInformation("   • Analysis data length: {Length}", analysis?.Length ?? 0);
+            _logger.LogInformation("   • SourceProjectId: {SourceId}", sourceProjectId);
+            _logger.LogInformation("   • TargetProjectId: {TargetId}", targetProjectId);
+            _logger.LogInformation("🔍 First 500 chars of received JSON: {JsonPreview}", 
+                !string.IsNullOrEmpty(analysis) && analysis.Length > 500 ? analysis.Substring(0, 500) : analysis ?? "null");
+
+            if (string.IsNullOrEmpty(analysis))
+            {
+                _logger.LogWarning("⚠️ No analysis data provided to SelectiveUpdates");
+                TempData["Error"] = "No analysis data provided";
+                return RedirectToAction("Index");
+            }
+
+            var differences = System.Text.Json.JsonSerializer.Deserialize<ProjectDifferencesAnalysis>(analysis, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+            
+            _logger.LogInformation("🔍 Deserialized analysis results:");
+            _logger.LogInformation("   • WorkItems.HasChanges: {HasChanges}", differences?.WorkItems?.HasChanges);
+            _logger.LogInformation("   • WorkItems.NewItems.Count: {NewCount}", differences?.WorkItems?.NewItems?.Count ?? 0);
+            _logger.LogInformation("   • WorkItems.UpdatedItems.Count: {UpdatedCount}", differences?.WorkItems?.UpdatedItems?.Count ?? 0);
+            _logger.LogInformation("   • HasAnyDifferences: {HasAnyDifferences}", differences?.HasAnyDifferences);
+            
+            // Pass the project IDs to the view via ViewBag
+            ViewBag.SourceProjectId = sourceProjectId;
+            ViewBag.TargetProjectId = targetProjectId;
+            
+            return View(differences);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error displaying selective updates");
+            TempData["Error"] = $"Error displaying analysis: {ex.Message}";
+            return RedirectToAction("Index");
         }
     }
 }

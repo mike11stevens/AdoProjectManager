@@ -153,9 +153,14 @@
                                 <i class="fas fa-times"></i> Cancel
                             </a>
                             
-                            <button type="submit" class="btn btn-primary btn-lg">
-                                <i class="fas fa-magic"></i> Start Element Transfer
-                            </button>
+                            <div>
+                                <button type="button" class="btn btn-info btn-lg mr-2" onclick="analyzeDifferences()">
+                                    <i class="fas fa-search"></i> Analyze Differences
+                                </button>
+                                <button type="submit" class="btn btn-primary btn-lg">
+                                    <i class="fas fa-magic"></i> Start Element Transfer
+                                </button>
+                            </div>
                         </div>
                     </form>
                 </div>
@@ -242,5 +247,88 @@
                 return true;
             });
         });
+
+        function analyzeDifferences() {
+            const sourceProjectId = $('#SourceProjectId').val();
+            const targetProjectId = $('#TargetProjectId').val();
+            
+            if (!sourceProjectId) {
+                alert('Please select a source project.');
+                return;
+            }
+            
+            if (!targetProjectId) {
+                alert('Please select a target project.');
+                return;
+            }
+            
+            if (sourceProjectId === targetProjectId) {
+                alert('Source and target projects cannot be the same.');
+                return;
+            }
+            
+            // Show loading state
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Analyzing...';
+            button.disabled = true;
+            
+            fetch('/ProjectWizard/AnalyzeDifferences', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    SourceProjectId: sourceProjectId,
+                    TargetProjectId: targetProjectId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('AnalyzeDifferences response:', data);
+                if (data.success) {
+                    console.log('Analysis successful, redirecting to SelectiveUpdates...');
+                    // Create a form to post the analysis data to the SelectiveUpdates view
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = '/ProjectWizard/SelectiveUpdates';
+                    form.style.display = 'none';
+                    
+                    const analysisInput = document.createElement('input');
+                    analysisInput.type = 'hidden';
+                    analysisInput.name = 'analysis';
+                    analysisInput.value = JSON.stringify(data.differences);
+                    form.appendChild(analysisInput);
+                    
+                    const sourceInput = document.createElement('input');
+                    sourceInput.type = 'hidden';
+                    sourceInput.name = 'sourceProjectId';
+                    sourceInput.value = sourceProjectId;
+                    form.appendChild(sourceInput);
+                    
+                    const targetInput = document.createElement('input');
+                    targetInput.type = 'hidden';
+                    targetInput.name = 'targetProjectId';
+                    targetInput.value = targetProjectId;
+                    form.appendChild(targetInput);
+                    
+                    console.log('Form created, submitting...');
+                    document.body.appendChild(form);
+                    form.submit();
+                } else {
+                    console.error('Analysis failed:', data.message);
+                    alert('Error analyzing differences: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Fetch error:', error);
+                alert('Error analyzing differences: ' + error.message);
+            })
+            .finally(() => {
+                console.log('Request completed, restoring button...');
+                button.innerHTML = originalText;
+                button.disabled = false;
+            });
+        }
     </script>
 }

@@ -1,0 +1,368 @@
+@model AdoProjectManager.Models.ProjectDifferencesAnalysis
+@{
+    ViewData["Title"] = "Selective Updates";
+}
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <i class="fas fa-tasks mr-2"></i>
+                        Selective Project Updates
+                    </h3>
+                    <div class="card-tools">
+                        <button type="button" class="btn btn-success btn-sm" onclick="applySelectedUpdates()">
+                            <i class="fas fa-check mr-1"></i> Apply Selected Updates
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm ml-2" onclick="selectAll()">
+                            <i class="fas fa-check-square mr-1"></i> Select All
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm ml-1" onclick="selectNone()">
+                            <i class="fas fa-square mr-1"></i> Select None
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="differencesContainer">
+                        @if (!Model.HasAnyDifferences)
+                        {
+                            <div class="alert alert-success">
+                                <i class="fas fa-check-circle mr-2"></i>
+                                <strong>All synchronized!</strong> No differences found between the source and target projects.
+                            </div>
+                        }
+                        else
+                        {
+                            <!-- Work Item Differences -->
+                            @if (Model.WorkItems.HasChanges)
+                            {
+                                <div class="card mb-3">
+                                    <div class="card-header">
+                                        <h5 class="mb-0">
+                                            <i class="fas fa-clipboard-list mr-2"></i>
+                                            Work Item Differences
+                                        </h5>
+                                    </div>
+                                    <div class="card-body">
+                                        @if (Model.WorkItems.NewItems.Any())
+                                        {
+                                            <h6 class="text-success">New Items to Create (@Model.WorkItems.NewItems.Count)</h6>
+                                            <div class="table-responsive mb-3">
+                                                <table class="table table-sm">
+                                                    <thead>
+                                                        <tr>
+                                                            <th width="50px">
+                                                                <input type="checkbox" id="selectAllNew" onchange="toggleSection('newItems', this.checked)">
+                                                            </th>
+                                                            <th>Title</th>
+                                                            <th>Type</th>
+                                                            <th>State</th>
+                                                            <th>Description</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var item in Model.WorkItems.NewItems)
+                                                        {
+                                                            <tr>
+                                                                <td>
+                                                                    <input type="checkbox" class="newItems" data-source-id="@item.SourceId">
+                                                                </td>
+                                                                <td>@item.Title</td>
+                                                                <td><span class="badge badge-info">@item.WorkItemType</span></td>
+                                                                <td><span class="badge badge-success">@item.SourceState</span></td>
+                                                                <td>@item.Description</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+
+                                        @if (Model.WorkItems.UpdatedItems.Any())
+                                        {
+                                            <h6 class="text-warning">Items to Update (@Model.WorkItems.UpdatedItems.Count)</h6>
+                                            <div class="table-responsive mb-3">
+                                                <table class="table table-sm">
+                                                    <thead>
+                                                        <tr>
+                                                            <th width="50px">
+                                                                <input type="checkbox" id="selectAllUpdates" onchange="toggleSection('updateItems', this.checked)">
+                                                            </th>
+                                                            <th>Title</th>
+                                                            <th>Type</th>
+                                                            <th>Current State</th>
+                                                            <th>New State</th>
+                                                            <th>Description</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var item in Model.WorkItems.UpdatedItems)
+                                                        {
+                                                            <tr>
+                                                                <td>
+                                                                    <input type="checkbox" class="updateItems" data-source-id="@item.SourceId" data-target-id="@item.TargetId">
+                                                                </td>
+                                                                <td>@item.Title</td>
+                                                                <td><span class="badge badge-info">@item.WorkItemType</span></td>
+                                                                <td><span class="badge badge-secondary">@item.TargetState</span></td>
+                                                                <td><span class="badge badge-warning">@item.SourceState</span></td>
+                                                                <td>@item.Description</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+
+                            <!-- Classification Node Differences -->
+                            @if (Model.ClassificationNodes.HasChanges)
+                            {
+                                <div class="card mb-3">
+                                    <div class="card-header">
+                                        <h5 class="mb-0">
+                                            <i class="fas fa-sitemap mr-2"></i>
+                                            Classification Node Differences
+                                        </h5>
+                                    </div>
+                                    <div class="card-body">
+                                        @if (Model.ClassificationNodes.MissingAreaPaths.Any())
+                                        {
+                                            <h6 class="text-success">Missing Area Paths (@Model.ClassificationNodes.MissingAreaPaths.Count)</h6>
+                                            <div class="table-responsive mb-3">
+                                                <table class="table table-sm">
+                                                    <thead>
+                                                        <tr>
+                                                            <th width="50px">
+                                                                <input type="checkbox" id="selectAllAreaPaths" onchange="toggleSection('missingAreaPaths', this.checked)">
+                                                            </th>
+                                                            <th>Path</th>
+                                                            <th>Description</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var node in Model.ClassificationNodes.MissingAreaPaths)
+                                                        {
+                                                            <tr>
+                                                                <td>
+                                                                    <input type="checkbox" class="missingAreaPaths" data-path="@node.Path">
+                                                                </td>
+                                                                <td><code>@node.Path</code></td>
+                                                                <td>@node.Description</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+
+                                        @if (Model.ClassificationNodes.MissingIterationPaths.Any())
+                                        {
+                                            <h6 class="text-success">Missing Iteration Paths (@Model.ClassificationNodes.MissingIterationPaths.Count)</h6>
+                                            <div class="table-responsive mb-3">
+                                                <table class="table table-sm">
+                                                    <thead>
+                                                        <tr>
+                                                            <th width="50px">
+                                                                <input type="checkbox" id="selectAllIterationPaths" onchange="toggleSection('missingIterationPaths', this.checked)">
+                                                            </th>
+                                                            <th>Path</th>
+                                                            <th>Description</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var node in Model.ClassificationNodes.MissingIterationPaths)
+                                                        {
+                                                            <tr>
+                                                                <td>
+                                                                    <input type="checkbox" class="missingIterationPaths" data-path="@node.Path">
+                                                                </td>
+                                                                <td><code>@node.Path</code></td>
+                                                                <td>@node.Description</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+
+                            <!-- Security Group Differences -->
+                            @if (Model.SecurityGroups.HasChanges)
+                            {
+                                <div class="card mb-3">
+                                    <div class="card-header">
+                                        <h5 class="mb-0">
+                                            <i class="fas fa-users mr-2"></i>
+                                            Security Group Differences
+                                        </h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="alert alert-info">
+                                            <i class="fas fa-info-circle mr-2"></i>
+                                            Security group changes require elevated permissions and are not available with current token.
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+
+                            <!-- Wiki Differences -->
+                            @if (Model.Wiki.HasChanges)
+                            {
+                                <div class="card mb-3">
+                                    <div class="card-header">
+                                        <h5 class="mb-0">
+                                            <i class="fas fa-book mr-2"></i>
+                                            Wiki Differences
+                                        </h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="alert alert-warning">
+                                            <i class="fas fa-exclamation-triangle mr-2"></i>
+                                            @Model.Wiki.GuidanceMessage
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden form data -->
+<input type="hidden" id="sourceProjectId" value="@ViewBag.SourceProjectId" />
+<input type="hidden" id="targetProjectId" value="@ViewBag.TargetProjectId" />
+
+<script>
+function toggleSection(className, checked) {
+    const checkboxes = document.querySelectorAll('.' + className);
+    checkboxes.forEach(cb => cb.checked = checked);
+}
+
+function selectAll() {
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]:not([id^="selectAll"])');
+    checkboxes.forEach(cb => cb.checked = true);
+    
+    // Update section headers
+    document.querySelectorAll('[id^="selectAll"]').forEach(cb => cb.checked = true);
+}
+
+function selectNone() {
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => cb.checked = false);
+}
+
+function applySelectedUpdates() {
+    const sourceProjectId = document.getElementById('sourceProjectId').value;
+    const targetProjectId = document.getElementById('targetProjectId').value;
+    
+    if (!sourceProjectId || !targetProjectId) {
+        alert('Project IDs not set. Please return to the wizard start page.');
+        return;
+    }
+    
+    // Collect selected items
+    const selectedNewItems = [];
+    document.querySelectorAll('.newItems:checked').forEach(cb => {
+        selectedNewItems.push({
+            SourceId: parseInt(cb.dataset.sourceId),
+            Selected: true
+        });
+    });
+    
+    const selectedUpdateItems = [];
+    document.querySelectorAll('.updateItems:checked').forEach(cb => {
+        selectedUpdateItems.push({
+            SourceId: parseInt(cb.dataset.sourceId),
+            TargetId: cb.dataset.targetId ? parseInt(cb.dataset.targetId) : null,
+            Selected: true
+        });
+    });
+    
+    const selectedMissingAreaPaths = [];
+    document.querySelectorAll('.missingAreaPaths:checked').forEach(cb => {
+        selectedMissingAreaPaths.push({
+            Path: cb.dataset.path,
+            Selected: true
+        });
+    });
+    
+    const selectedMissingIterationPaths = [];
+    document.querySelectorAll('.missingIterationPaths:checked').forEach(cb => {
+        selectedMissingIterationPaths.push({
+            Path: cb.dataset.path,
+            Selected: true
+        });
+    });
+    
+    if (selectedNewItems.length === 0 && selectedUpdateItems.length === 0 && 
+        selectedMissingAreaPaths.length === 0 && selectedMissingIterationPaths.length === 0) {
+        alert('Please select at least one item to update.');
+        return;
+    }
+    
+    const request = {
+        SourceProjectId: sourceProjectId,
+        TargetProjectId: targetProjectId,
+        Differences: {
+            WorkItems: {
+                NewItems: selectedNewItems,
+                UpdatedItems: selectedUpdateItems
+            },
+            ClassificationNodes: {
+                MissingAreaPaths: selectedMissingAreaPaths,
+                MissingIterationPaths: selectedMissingIterationPaths
+            },
+            SecurityGroups: { GroupDifferences: [] },
+            Wiki: { PageDifferences: [] }
+        }
+    };
+    
+    // Show loading state
+    const button = event.target;
+    const originalText = button.innerHTML;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Applying Updates...';
+    button.disabled = true;
+    
+    fetch('/ProjectWizard/ApplySelectiveUpdates', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Updates applied successfully!');
+            // Refresh the analysis to show updated state
+            window.location.reload();
+        } else {
+            alert('Error applying updates: ' + data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Error applying updates: ' + error.message);
+    })
+    .finally(() => {
+        button.innerHTML = originalText;
+        button.disabled = false;
+    });
+}
+
+// Set project IDs when page loads (these would be passed from the controller)
+window.addEventListener('DOMContentLoaded', function() {
+    // These would be set by the controller when rendering the view
+    // For now, they need to be set by the calling page
+});
+</script>
