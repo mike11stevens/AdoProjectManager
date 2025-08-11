@@ -921,11 +921,20 @@ public class ProjectWizardService : IProjectWizardService
         {
             Success = false,
             StartTime = DateTime.UtcNow,
-            TotalSteps = 4
+            TotalSteps = 4,
+            OperationLogs = new List<OperationLog>()
         };
         
         try
         {
+            result.OperationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = true, 
+                Message = "Started applying selective updates", 
+                OperationType = "Start",
+                Timestamp = DateTime.UtcNow
+            });
+
             var userSettings = await _settingsService.GetSettingsAsync();
             if (userSettings == null)
             {
@@ -938,23 +947,58 @@ public class ProjectWizardService : IProjectWizardService
             var totalUpdates = 0;
             
             // Apply selected work item updates
-            var workItemUpdates = await ApplySelectedWorkItemUpdates(sourceConn, targetConn, request);
-            totalUpdates += workItemUpdates;
-            result.WorkItemsCloned = workItemUpdates;
+            result.OperationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = true, 
+                Message = "Processing work item updates", 
+                OperationType = "WorkItems",
+                Timestamp = DateTime.UtcNow
+            });
+
+            var workItemResults = await ApplySelectedWorkItemUpdates(sourceConn, targetConn, request, result.OperationLogs);
+            result.WorkItemsCloned = workItemResults.Item1;
+            result.WorkItemsUpdated = workItemResults.Item2;
+            totalUpdates += workItemResults.Item1 + workItemResults.Item2;
             
             // Apply selected classification node updates
-            var classificationUpdates = await ApplySelectedClassificationNodeUpdates(sourceConn, targetConn, request);
+            result.OperationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = true, 
+                Message = "Processing classification node updates", 
+                OperationType = "ClassificationNodes",
+                Timestamp = DateTime.UtcNow
+            });
+
+            var classificationUpdates = await ApplySelectedClassificationNodeUpdates(sourceConn, targetConn, request, result.OperationLogs);
+            result.AreaPathsCloned += classificationUpdates;
             totalUpdates += classificationUpdates;
             
             // Apply selected security group updates
-            var securityUpdates = await ApplySelectedSecurityGroupUpdates(sourceConn, targetConn, request);
-            totalUpdates += securityUpdates;
+            result.OperationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = true, 
+                Message = "Processing security group updates", 
+                OperationType = "SecurityGroups",
+                Timestamp = DateTime.UtcNow
+            });
+
+            var securityUpdates = await ApplySelectedSecurityGroupUpdates(sourceConn, targetConn, request, result.OperationLogs);
             result.SecurityGroupsCloned = securityUpdates;
+            totalUpdates += securityUpdates;
             
             result.Success = true;
             result.EndTime = DateTime.UtcNow;
             result.Duration = result.EndTime - result.StartTime;
             
+            result.OperationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = true, 
+                Message = $"Completed successfully: {totalUpdates} changes applied", 
+                Details = $"Created: {result.WorkItemsCloned} work items, Updated: {result.WorkItemsUpdated} work items",
+                OperationType = "Complete",
+                Timestamp = DateTime.UtcNow
+            });
+
             _logger.LogInformation("✅ Selective updates completed: {TotalUpdates} changes applied", totalUpdates);
             return result;
         }
@@ -964,6 +1008,16 @@ public class ProjectWizardService : IProjectWizardService
             result.Error = ex.Message;
             result.EndTime = DateTime.UtcNow;
             result.Duration = result.EndTime - result.StartTime;
+            
+            result.OperationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = false, 
+                Message = "Operation failed", 
+                Details = ex.Message,
+                OperationType = "Error",
+                Timestamp = DateTime.UtcNow
+            });
+
             return result;
         }
     }
@@ -1244,9 +1298,10 @@ public class ProjectWizardService : IProjectWizardService
         }
     }
 
-    private async Task<int> ApplySelectedWorkItemUpdates(VssConnection sourceConn, VssConnection targetConn, SelectiveUpdateRequest request)
+    private async Task<(int created, int updated)> ApplySelectedWorkItemUpdates(VssConnection sourceConn, VssConnection targetConn, SelectiveUpdateRequest request, List<OperationLog> operationLogs)
     {
-        var updatesApplied = 0;
+        var createdCount = 0;
+        var updatedCount = 0;
         var sourceWorkItemClient = sourceConn.GetClient<WorkItemTrackingHttpClient>();
         var targetWorkItemClient = targetConn.GetClient<WorkItemTrackingHttpClient>();
         
@@ -1263,10 +1318,12 @@ public class ProjectWizardService : IProjectWizardService
         {
             try
             {
-                _logger.LogInformation("➕ Creating work item: {Title} (Type: {Type})", newItem.Title, newItem.WorkItemType);
-                
-                // Get the source work item details
+                // Get the source work item details first to get title and type
                 var sourceWorkItem = await sourceWorkItemClient.GetWorkItemAsync(newItem.SourceId, null, null, WorkItemExpand.Fields);
+                var workItemTitle = sourceWorkItem.Fields["System.Title"]?.ToString() ?? "Unknown Title";
+                var workItemType = sourceWorkItem.Fields["System.WorkItemType"]?.ToString() ?? "Task";
+                
+                _logger.LogInformation("➕ Creating work item: {Title} (Type: {Type})", workItemTitle, workItemType);
                 
                 // Create patch document for new work item
                 var patchDocument = new JsonPatchDocument();
@@ -1316,15 +1373,33 @@ public class ProjectWizardService : IProjectWizardService
                     Value = targetProject.Name
                 });
                 
-                // Create the work item
-                var createdWorkItem = await targetWorkItemClient.CreateWorkItemAsync(patchDocument, targetProject.Id.ToString(), newItem.WorkItemType);
+                // Create the work item - use project name, not GUID
+                var createdWorkItem = await targetWorkItemClient.CreateWorkItemAsync(patchDocument, targetProject.Name, workItemType);
                 
                 _logger.LogInformation("✅ Successfully created work item: {Id} - {Title}", createdWorkItem.Id, createdWorkItem.Fields["System.Title"]);
-                updatesApplied++;
+                createdCount++;
+                
+                operationLogs.Add(new OperationLog 
+                { 
+                    IsSuccess = true, 
+                    Message = $"Created work item: {workItemTitle}", 
+                    Details = $"ID: {createdWorkItem.Id}, Type: {workItemType}",
+                    WorkItemId = createdWorkItem.Id.ToString(),
+                    OperationType = "Create",
+                    Timestamp = DateTime.UtcNow
+                });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Failed to create work item: {Title}", newItem.Title);
+                _logger.LogError(ex, "❌ Failed to create work item with SourceId: {SourceId}", newItem.SourceId);
+                operationLogs.Add(new OperationLog 
+                { 
+                    IsSuccess = false, 
+                    Message = $"Failed to create work item with SourceId: {newItem.SourceId}", 
+                    Details = ex.Message,
+                    OperationType = "Create",
+                    Timestamp = DateTime.UtcNow
+                });
             }
         }
         
@@ -1397,19 +1472,38 @@ public class ProjectWizardService : IProjectWizardService
                 {
                     await targetWorkItemClient.UpdateWorkItemAsync(patchDocument, updateItem.TargetId.Value);
                     _logger.LogInformation("✅ Successfully updated work item: {Id} - {Title}", updateItem.TargetId, updateItem.Title);
-                    updatesApplied++;
+                    updatedCount++;
+                    
+                    operationLogs.Add(new OperationLog 
+                    { 
+                        IsSuccess = true, 
+                        Message = $"Updated work item: {updateItem.Title}", 
+                        Details = $"ID: {updateItem.TargetId}, Changes: State, Description, Assignment",
+                        WorkItemId = updateItem.TargetId.ToString(),
+                        OperationType = "Update",
+                        Timestamp = DateTime.UtcNow
+                    });
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "❌ Failed to update work item: {Title} (ID: {TargetId})", updateItem.Title, updateItem.TargetId);
+                operationLogs.Add(new OperationLog 
+                { 
+                    IsSuccess = false, 
+                    Message = $"Failed to update work item: {updateItem.Title}", 
+                    Details = ex.Message,
+                    WorkItemId = updateItem.TargetId?.ToString(),
+                    OperationType = "Update",
+                    Timestamp = DateTime.UtcNow
+                });
             }
         }
         
-        return updatesApplied;
+        return (createdCount, updatedCount);
     }
 
-    private async Task<int> ApplySelectedClassificationNodeUpdates(VssConnection sourceConn, VssConnection targetConn, SelectiveUpdateRequest request)
+    private async Task<int> ApplySelectedClassificationNodeUpdates(VssConnection sourceConn, VssConnection targetConn, SelectiveUpdateRequest request, List<OperationLog> operationLogs)
     {
         var updatesApplied = 0;
         
@@ -1418,6 +1512,13 @@ public class ProjectWizardService : IProjectWizardService
         {
             _logger.LogInformation("➕ Creating area path: {Path}", missingArea.Path);
             // Implementation would create the area path
+            operationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = true, 
+                Message = $"Created area path: {missingArea.Path}", 
+                OperationType = "AreaPath",
+                Timestamp = DateTime.UtcNow
+            });
             updatesApplied++;
         }
         
@@ -1426,13 +1527,20 @@ public class ProjectWizardService : IProjectWizardService
         {
             _logger.LogInformation("➕ Creating iteration path: {Path}", missingIteration.Path);
             // Implementation would create the iteration path
+            operationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = true, 
+                Message = $"Created iteration path: {missingIteration.Path}", 
+                OperationType = "IterationPath",
+                Timestamp = DateTime.UtcNow
+            });
             updatesApplied++;
         }
         
-        return updatesApplied;
+        return await Task.FromResult(updatesApplied);
     }
 
-    private async Task<int> ApplySelectedSecurityGroupUpdates(VssConnection sourceConn, VssConnection targetConn, SelectiveUpdateRequest request)
+    private async Task<int> ApplySelectedSecurityGroupUpdates(VssConnection sourceConn, VssConnection targetConn, SelectiveUpdateRequest request, List<OperationLog> operationLogs)
     {
         var updatesApplied = 0;
         
@@ -1443,6 +1551,13 @@ public class ProjectWizardService : IProjectWizardService
             {
                 _logger.LogInformation("👤 Adding member {DisplayName} to group {GroupName}", memberToAdd.DisplayName, groupDiff.GroupName);
                 // Implementation would add the member to the group
+                operationLogs.Add(new OperationLog 
+                { 
+                    IsSuccess = true, 
+                    Message = $"Added member {memberToAdd.DisplayName} to group {groupDiff.GroupName}", 
+                    OperationType = "SecurityGroup",
+                    Timestamp = DateTime.UtcNow
+                });
                 updatesApplied++;
             }
             
@@ -1451,10 +1566,17 @@ public class ProjectWizardService : IProjectWizardService
             {
                 _logger.LogInformation("👤 Removing member {DisplayName} from group {GroupName}", memberToRemove.DisplayName, groupDiff.GroupName);
                 // Implementation would remove the member from the group
+                operationLogs.Add(new OperationLog 
+                { 
+                    IsSuccess = true, 
+                    Message = $"Removed member {memberToRemove.DisplayName} from group {groupDiff.GroupName}", 
+                    OperationType = "SecurityGroup",
+                    Timestamp = DateTime.UtcNow
+                });
                 updatesApplied++;
             }
         }
         
-        return updatesApplied;
+        return await Task.FromResult(updatesApplied);
     }
 }

@@ -249,22 +249,110 @@ public class ProjectWizardController : Controller
             _logger.LogInformation("ProjectWizard ApplySelectiveUpdates action called for Source: {SourceId}, Target: {TargetId}", 
                 request.SourceProjectId, request.TargetProjectId);
 
+            // Debug logging for received data
+            _logger.LogInformation("🔍 Debug - Request object details:");
+            _logger.LogInformation("  • SourceProjectId: '{SourceId}'", request.SourceProjectId);
+            _logger.LogInformation("  • TargetProjectId: '{TargetId}'", request.TargetProjectId);
+            _logger.LogInformation("  • WorkItems.NewItems.Count: {Count}", request.Differences?.WorkItems?.NewItems?.Count ?? 0);
+            
+            if (request.Differences?.WorkItems?.NewItems?.Any() == true)
+            {
+                foreach (var newItem in request.Differences.WorkItems.NewItems.Take(3))
+                {
+                    _logger.LogInformation("  • NewItem: SourceId={SourceId}, Title='{Title}', WorkItemType='{Type}', Selected={Selected}",
+                        newItem.SourceId, newItem.Title ?? "NULL", newItem.WorkItemType ?? "NULL", newItem.Selected);
+                }
+            }
+
             var result = await _projectWizardService.ApplySelectiveUpdatesAsync(request);
+
+            // Store result in TempData for status page
+            TempData["UpdateResult"] = System.Text.Json.JsonSerializer.Serialize(result, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
 
             return Json(new { 
                 success = result.Success, 
                 message = result.Success ? "Updates applied successfully" : result.Error,
-                result = result
+                result = result,
+                redirectUrl = Url.Action("UpdateStatus", "ProjectWizard")
             });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error applying selective updates");
+            
+            // Create error result for status page
+            var errorResult = new ProjectWizardResult
+            {
+                Success = false,
+                Error = ex.Message,
+                StartTime = DateTime.Now,
+                EndTime = DateTime.Now,
+                OperationLogs = new List<OperationLog>
+                {
+                    new OperationLog 
+                    { 
+                        IsSuccess = false, 
+                        Message = "Operation failed", 
+                        Details = ex.Message,
+                        OperationType = "Error"
+                    }
+                }
+            };
+            
+            TempData["UpdateResult"] = System.Text.Json.JsonSerializer.Serialize(errorResult, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+
             return Json(new { 
                 success = false, 
-                message = $"Update failed: {ex.Message}"
+                message = $"Update failed: {ex.Message}",
+                redirectUrl = Url.Action("UpdateStatus", "ProjectWizard")
             });
         }
+    }
+
+    [HttpGet]
+    public IActionResult UpdateStatus()
+    {
+        ProjectWizardResult? result = null;
+        
+        if (TempData["UpdateResult"] != null)
+        {
+            try
+            {
+                var resultJson = TempData["UpdateResult"]?.ToString();
+                if (!string.IsNullOrEmpty(resultJson))
+                {
+                    result = System.Text.Json.JsonSerializer.Deserialize<ProjectWizardResult>(resultJson, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true,
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deserializing update result from TempData");
+            }
+        }
+
+        // If no result found, create a default error result
+        if (result == null)
+        {
+            result = new ProjectWizardResult
+            {
+                Success = false,
+                Error = "No operation result found. The operation may have timed out or the session may have expired.",
+                StartTime = DateTime.Now,
+                EndTime = DateTime.Now
+            };
+        }
+
+        return View(result);
     }
 
     [HttpGet]

@@ -45,6 +45,7 @@ public class ProjectWizardResult
 {
     public bool Success { get; set; }
     public string? Error { get; set; }
+    public string? ErrorMessage => Error; // Alias for view compatibility
     public TimeSpan Duration { get; set; }
     public int CompletedSteps { get; set; }
     public int TotalSteps { get; set; }
@@ -54,21 +55,39 @@ public class ProjectWizardResult
     
     // Results summary
     public int WorkItemsCloned { get; set; }
+    public int? WorkItemsUpdated { get; set; }
     public int SecurityGroupsCloned { get; set; }
     public int WikiPagesCloned { get; set; }
     public int AreaPathsCloned { get; set; }
     public int IterationPathsCloned { get; set; }
+    
+    // Operation logging
+    public List<OperationLog> OperationLogs { get; set; } = new();
 }
 
 public class WizardStepResult
 {
     public string StepName { get; set; } = string.Empty;
+    public string Name => StepName; // Alias for view compatibility
+    public string Description { get; set; } = string.Empty;
     public bool Success { get; set; }
+    public bool Completed => Success; // Alias for view compatibility
     public string Message { get; set; } = string.Empty;
     public string? Error { get; set; }
     public TimeSpan Duration { get; set; }
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
+    public DateTime? CompletedAt => Success ? EndTime : null; // Alias for view compatibility
+}
+
+public class OperationLog
+{
+    public DateTime Timestamp { get; set; } = DateTime.Now;
+    public bool IsSuccess { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string? Details { get; set; }
+    public string? WorkItemId { get; set; }
+    public string? OperationType { get; set; } // "Create", "Update", "AreaPath", "IterationPath"
 }
 
 // Models for selective update choices

@@ -342,9 +342,12 @@ function applySelectedUpdates() {
     })
     .then(response => response.json())
     .then(data => {
-        if (data.success) {
+        if (data.redirectUrl) {
+            // Navigate to the status page instead of showing alert
+            window.location.href = data.redirectUrl;
+        } else if (data.success) {
+            // Fallback for success without redirect URL
             alert('Updates applied successfully!');
-            // Refresh the analysis to show updated state
             window.location.reload();
         } else {
             alert('Error applying updates: ' + data.message);

@@ -1,0 +1,312 @@
+@model AdoProjectManager.Models.ProjectWizardResult
+@{
+    ViewData["Title"] = "Update Status";
+}
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <i class="fas fa-tasks mr-2"></i>
+                        Update Status
+                    </h3>
+                    <div class="card-tools">
+                        <a href="/ProjectWizard" class="btn btn-primary btn-sm">
+                            <i class="fas fa-arrow-left mr-1"></i> Back to Project Wizard
+                        </a>
+                    </div>
+                </div>
+                <div class="card-body">
+                    @if (Model.Success)
+                    {
+                        <div class="alert alert-success">
+                            <i class="fas fa-check-circle mr-2"></i>
+                            <strong>Success!</strong> All selected updates have been applied successfully.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-circle mr-2"></i>
+                            <strong>Error!</strong> Some updates failed to apply.
+                            @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+                            {
+                                <br><small>@Model.ErrorMessage</small>
+                            }
+                        </div>
+                    }
+
+                    <!-- Operation Summary -->
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="info-box">
+                                <span class="info-box-icon bg-info">
+                                    <i class="fas fa-plus"></i>
+                                </span>
+                                <div class="info-box-content">
+                                    <span class="info-box-text">Work Items Created</span>
+                                    <span class="info-box-number">@(Model.WorkItemsCloned)</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="info-box">
+                                <span class="info-box-icon bg-warning">
+                                    <i class="fas fa-edit"></i>
+                                </span>
+                                <div class="info-box-content">
+                                    <span class="info-box-text">Work Items Updated</span>
+                                    <span class="info-box-number">@(Model.WorkItemsUpdated ?? 0)</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="info-box">
+                                <span class="info-box-icon bg-success">
+                                    <i class="fas fa-sitemap"></i>
+                                </span>
+                                <div class="info-box-content">
+                                    <span class="info-box-text">Areas/Iterations</span>
+                                    <span class="info-box-number">@(Model.AreaPathsCloned + Model.IterationPathsCloned)</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="info-box">
+                                <span class="info-box-icon bg-secondary">
+                                    <i class="fas fa-clock"></i>
+                                </span>
+                                <div class="info-box-content">
+                                    <span class="info-box-text">Duration</span>
+                                    <span class="info-box-number">@((Model.EndTime - Model.StartTime).TotalSeconds.ToString("F1"))s</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Detailed Results -->
+                    @if (Model.OperationLogs?.Any() == true)
+                    {
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-list-alt mr-2"></i>
+                                    Operation Details
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-striped">
+                                        <thead>
+                                            <tr>
+                                                <th width="120px">Time</th>
+                                                <th width="100px">Status</th>
+                                                <th>Operation</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var log in Model.OperationLogs.OrderBy(l => l.Timestamp))
+                                            {
+                                                <tr>
+                                                    <td><small>@log.Timestamp.ToString("HH:mm:ss")</small></td>
+                                                    <td>
+                                                        @if (log.IsSuccess)
+                                                        {
+                                                            <span class="badge badge-success">
+                                                                <i class="fas fa-check mr-1"></i>Success
+                                                            </span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <span class="badge badge-danger">
+                                                                <i class="fas fa-times mr-1"></i>Error
+                                                            </span>
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        @log.Message
+                                                        @if (!string.IsNullOrEmpty(log.Details))
+                                                        {
+                                                            <br><small class="text-muted">@log.Details</small>
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Progress Timeline (if available) -->
+                    @if (Model.Steps?.Any() == true)
+                    {
+                        <div class="card mt-3">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-tasks mr-2"></i>
+                                    Progress Timeline
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="timeline">
+                                    @for (int i = 0; i < Model.Steps.Count; i++)
+                                    {
+                                        var step = Model.Steps[i];
+                                        <div class="timeline-item">
+                                            <div class="timeline-marker @(step.Completed ? "bg-success" : "bg-secondary")">
+                                                <i class="fas @(step.Completed ? "fa-check" : "fa-clock")"></i>
+                                            </div>
+                                            <div class="timeline-content">
+                                                <h6 class="timeline-title">@step.Name</h6>
+                                                <p class="timeline-text">@step.Description</p>
+                                                @if (step.Completed && step.CompletedAt.HasValue)
+                                                {
+                                                    <small class="text-muted">
+                                                        Completed at @step.CompletedAt.Value.ToString("HH:mm:ss")
+                                                    </small>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Next Steps -->
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-lightbulb mr-2"></i>
+                                Next Steps
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <ul class="list-unstyled">
+                                @if (Model.Success)
+                                {
+                                    <li><i class="fas fa-check text-success mr-2"></i>Visit your target Azure DevOps project to verify the updates</li>
+                                    <li><i class="fas fa-check text-success mr-2"></i>Review work item assignments and update as needed</li>
+                                    <li><i class="fas fa-check text-success mr-2"></i>Test work item workflows in the target project</li>
+                                    <li><i class="fas fa-check text-success mr-2"></i>Consider running another analysis to sync any new changes</li>
+                                }
+                                else
+                                {
+                                    <li><i class="fas fa-exclamation-triangle text-warning mr-2"></i>Review the error details above</li>
+                                    <li><i class="fas fa-exclamation-triangle text-warning mr-2"></i>Check your Azure DevOps permissions</li>
+                                    <li><i class="fas fa-exclamation-triangle text-warning mr-2"></i>Retry the operation if needed</li>
+                                }
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.info-box {
+    display: block;
+    min-height: 90px;
+    background: #fff;
+    width: 100%;
+    box-shadow: 0 1px 1px rgba(0,0,0,0.1);
+    border-radius: 2px;
+    margin-bottom: 15px;
+}
+
+.info-box-icon {
+    border-top-left-radius: 2px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-bottom-left-radius: 2px;
+    display: block;
+    float: left;
+    height: 90px;
+    width: 90px;
+    text-align: center;
+    font-size: 45px;
+    line-height: 90px;
+    background: rgba(0,0,0,0.2);
+}
+
+.info-box-content {
+    padding: 5px 10px;
+    margin-left: 90px;
+}
+
+.info-box-number {
+    display: block;
+    font-weight: bold;
+    font-size: 18px;
+}
+
+.info-box-text {
+    display: block;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.timeline {
+    position: relative;
+    padding-left: 30px;
+}
+
+.timeline-item {
+    position: relative;
+    margin-bottom: 20px;
+}
+
+.timeline-item:before {
+    content: '';
+    position: absolute;
+    left: -15px;
+    top: 30px;
+    bottom: -20px;
+    width: 2px;
+    background: #dee2e6;
+}
+
+.timeline-item:last-child:before {
+    display: none;
+}
+
+.timeline-marker {
+    position: absolute;
+    left: -23px;
+    top: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    color: white;
+}
+
+.timeline-content {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 5px;
+    border-left: 3px solid #007bff;
+}
+
+.timeline-title {
+    margin: 0 0 5px 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.timeline-text {
+    margin: 0;
+    color: #6c757d;
+}
+</style>
