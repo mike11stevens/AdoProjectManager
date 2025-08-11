@@ -119,80 +119,6 @@
                                 </div>
                             }
 
-                            <!-- Classification Node Differences -->
-                            @if (Model.ClassificationNodes.HasChanges)
-                            {
-                                <div class="card mb-3">
-                                    <div class="card-header">
-                                        <h5 class="mb-0">
-                                            <i class="fas fa-sitemap mr-2"></i>
-                                            Classification Node Differences
-                                        </h5>
-                                    </div>
-                                    <div class="card-body">
-                                        @if (Model.ClassificationNodes.MissingAreaPaths.Any())
-                                        {
-                                            <h6 class="text-success">Missing Area Paths (@Model.ClassificationNodes.MissingAreaPaths.Count)</h6>
-                                            <div class="table-responsive mb-3">
-                                                <table class="table table-sm">
-                                                    <thead>
-                                                        <tr>
-                                                            <th width="50px">
-                                                                <input type="checkbox" id="selectAllAreaPaths" onchange="toggleSection('missingAreaPaths', this.checked)">
-                                                            </th>
-                                                            <th>Path</th>
-                                                            <th>Description</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        @foreach (var node in Model.ClassificationNodes.MissingAreaPaths)
-                                                        {
-                                                            <tr>
-                                                                <td>
-                                                                    <input type="checkbox" class="missingAreaPaths" data-path="@node.Path">
-                                                                </td>
-                                                                <td><code>@node.Path</code></td>
-                                                                <td>@node.Description</td>
-                                                            </tr>
-                                                        }
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        }
-
-                                        @if (Model.ClassificationNodes.MissingIterationPaths.Any())
-                                        {
-                                            <h6 class="text-success">Missing Iteration Paths (@Model.ClassificationNodes.MissingIterationPaths.Count)</h6>
-                                            <div class="table-responsive mb-3">
-                                                <table class="table table-sm">
-                                                    <thead>
-                                                        <tr>
-                                                            <th width="50px">
-                                                                <input type="checkbox" id="selectAllIterationPaths" onchange="toggleSection('missingIterationPaths', this.checked)">
-                                                            </th>
-                                                            <th>Path</th>
-                                                            <th>Description</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        @foreach (var node in Model.ClassificationNodes.MissingIterationPaths)
-                                                        {
-                                                            <tr>
-                                                                <td>
-                                                                    <input type="checkbox" class="missingIterationPaths" data-path="@node.Path">
-                                                                </td>
-                                                                <td><code>@node.Path</code></td>
-                                                                <td>@node.Description</td>
-                                                            </tr>
-                                                        }
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        }
-                                    </div>
-                                </div>
-                            }
-
                             <!-- Security Group Differences -->
                             @if (Model.SecurityGroups.HasChanges)
                             {
@@ -227,6 +153,132 @@
                                             <i class="fas fa-exclamation-triangle mr-2"></i>
                                             @Model.Wiki.GuidanceMessage
                                         </div>
+                                    </div>
+                                </div>
+                            }
+
+                            <!-- Query Differences -->
+                            @if (Model.Queries.HasChanges)
+                            {
+                                <div class="card mb-3">
+                                    <div class="card-header">
+                                        <h5 class="mb-0">
+                                            <i class="fas fa-search mr-2"></i>
+                                            Work Item Query Differences
+                                        </h5>
+                                    </div>
+                                    <div class="card-body">
+                                        @if (Model.Queries.NewQueries.Any())
+                                        {
+                                            <h6 class="text-success">New Queries to Create (@Model.Queries.NewQueries.Count)</h6>
+                                            <div class="table-responsive mb-3">
+                                                <table class="table table-sm">
+                                                    <thead>
+                                                        <tr>
+                                                            <th width="50px">
+                                                                <input type="checkbox" id="selectAllNewQueries" onchange="toggleSection('newQueries', this.checked)">
+                                                            </th>
+                                                            <th>Name</th>
+                                                            <th>Path</th>
+                                                            <th>Type</th>
+                                                            <th>Visibility</th>
+                                                            <th>Description</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var query in Model.Queries.NewQueries)
+                                                        {
+                                                            <tr>
+                                                                <td>
+                                                                    <input type="checkbox" class="newQueries" data-query-id="@query.QueryId">
+                                                                </td>
+                                                                <td>@query.Name</td>
+                                                                <td><small class="text-muted">@query.Path</small></td>
+                                                                <td><span class="badge badge-info">@query.QueryType</span></td>
+                                                                <td><span class="badge @(query.IsPublic ? "badge-success" : "badge-secondary")">@(query.IsPublic ? "Public" : "Private")</span></td>
+                                                                <td>@query.Description</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+
+                                        @if (Model.Queries.UpdatedQueries.Any())
+                                        {
+                                            <h6 class="text-warning">Queries to Update (@Model.Queries.UpdatedQueries.Count)</h6>
+                                            <div class="table-responsive mb-3">
+                                                <table class="table table-sm">
+                                                    <thead>
+                                                        <tr>
+                                                            <th width="50px">
+                                                                <input type="checkbox" id="selectAllUpdateQueries" onchange="toggleSection('updateQueries', this.checked)">
+                                                            </th>
+                                                            <th>Name</th>
+                                                            <th>Path</th>
+                                                            <th>Type</th>
+                                                            <th>Visibility</th>
+                                                            <th>Changes</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var query in Model.Queries.UpdatedQueries)
+                                                        {
+                                                            <tr>
+                                                                <td>
+                                                                    <input type="checkbox" class="updateQueries" data-query-id="@query.QueryId">
+                                                                </td>
+                                                                <td>@query.Name</td>
+                                                                <td><small class="text-muted">@query.Path</small></td>
+                                                                <td><span class="badge badge-warning">@query.QueryType</span></td>
+                                                                <td><span class="badge @(query.IsPublic ? "badge-success" : "badge-secondary")">@(query.IsPublic ? "Public" : "Private")</span></td>
+                                                                <td>@query.Description</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+
+                                        @if (Model.Queries.MissingFolders.Any())
+                                        {
+                                            <h6 class="text-info">Missing Query Folders (@Model.Queries.MissingFolders.Count)</h6>
+                                            <div class="table-responsive mb-3">
+                                                <table class="table table-sm">
+                                                    <thead>
+                                                        <tr>
+                                                            <th width="50px">
+                                                                <input type="checkbox" id="selectAllMissingFolders" onchange="toggleSection('missingFolders', this.checked)">
+                                                            </th>
+                                                            <th>Folder Name</th>
+                                                            <th>Path</th>
+                                                            <th>Description</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var folder in Model.Queries.MissingFolders)
+                                                        {
+                                                            <tr>
+                                                                <td>
+                                                                    <input type="checkbox" class="missingFolders" data-query-id="@folder.QueryId">
+                                                                </td>
+                                                                <td>@folder.Name</td>
+                                                                <td><small class="text-muted">@folder.Path</small></td>
+                                                                <td>@folder.Description</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        }
+
+                                        @if (Model.Queries.SynchronizedQueries.Any())
+                                        {
+                                            <div class="mt-3">
+                                                <h6 class="text-muted">Synchronized Queries (@Model.Queries.SynchronizedQueries.Count)</h6>
+                                                <p class="text-muted">These queries are identical in both projects and don't need updates.</p>
+                                            </div>
+                                        }
                                     </div>
                                 </div>
                             }
@@ -288,24 +340,33 @@ function applySelectedUpdates() {
         });
     });
     
-    const selectedMissingAreaPaths = [];
-    document.querySelectorAll('.missingAreaPaths:checked').forEach(cb => {
-        selectedMissingAreaPaths.push({
-            Path: cb.dataset.path,
+    // Collect selected queries
+    const selectedNewQueries = [];
+    document.querySelectorAll('.newQueries:checked').forEach(cb => {
+        selectedNewQueries.push({
+            QueryId: cb.dataset.queryId,
             Selected: true
         });
     });
     
-    const selectedMissingIterationPaths = [];
-    document.querySelectorAll('.missingIterationPaths:checked').forEach(cb => {
-        selectedMissingIterationPaths.push({
-            Path: cb.dataset.path,
+    const selectedUpdateQueries = [];
+    document.querySelectorAll('.updateQueries:checked').forEach(cb => {
+        selectedUpdateQueries.push({
+            QueryId: cb.dataset.queryId,
+            Selected: true
+        });
+    });
+    
+    const selectedMissingFolders = [];
+    document.querySelectorAll('.missingFolders:checked').forEach(cb => {
+        selectedMissingFolders.push({
+            QueryId: cb.dataset.queryId,
             Selected: true
         });
     });
     
     if (selectedNewItems.length === 0 && selectedUpdateItems.length === 0 && 
-        selectedMissingAreaPaths.length === 0 && selectedMissingIterationPaths.length === 0) {
+        selectedNewQueries.length === 0 && selectedUpdateQueries.length === 0 && selectedMissingFolders.length === 0) {
         alert('Please select at least one item to update.');
         return;
     }
@@ -318,12 +379,13 @@ function applySelectedUpdates() {
                 NewItems: selectedNewItems,
                 UpdatedItems: selectedUpdateItems
             },
-            ClassificationNodes: {
-                MissingAreaPaths: selectedMissingAreaPaths,
-                MissingIterationPaths: selectedMissingIterationPaths
-            },
             SecurityGroups: { GroupDifferences: [] },
-            Wiki: { PageDifferences: [] }
+            Wiki: { PageDifferences: [] },
+            Queries: {
+                NewQueries: selectedNewQueries,
+                UpdatedQueries: selectedUpdateQueries,
+                MissingFolders: selectedMissingFolders
+            }
         }
     };
     

@@ -30,11 +30,11 @@ public class ProjectWizardController : Controller
         {
             _logger.LogInformation("ProjectWizard Index action called");
             
-            // Get projects for selection
+            // Get ALL projects for selection (not paginated for dropdown)
             var request = new ProjectSearchRequest
             {
                 Page = 1,
-                PageSize = 100, // Get more projects for selection
+                PageSize = 10000, // Get all projects for selection dropdown
                 SearchQuery = "",
                 IncludeRepositories = false
             };
@@ -42,9 +42,12 @@ public class ProjectWizardController : Controller
             var result = await _adoService.GetProjectsPagedAsync(request);
             _logger.LogInformation("Retrieved {ProjectCount} projects for wizard", result.Items?.Count ?? 0);
             
+            // Sort projects alphabetically for better user experience
+            var sortedProjects = result.Items?.OrderBy(p => p.Name).ToList() ?? new List<AdoProject>();
+            
             var model = new ProjectWizardRequest
             {
-                AvailableProjects = result.Items ?? new List<AdoProject>(),
+                AvailableProjects = sortedProjects,
                 SourceProjectId = sourceProject ?? "", // Pre-select if provided
                 Options = new ProjectWizardOptions
                 {

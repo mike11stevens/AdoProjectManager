@@ -11,6 +11,7 @@ using Microsoft.VisualStudio.Services.WebApi.Patch;
 using Microsoft.VisualStudio.Services.Graph.Client;
 using Microsoft.VisualStudio.Services.Security.Client;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace AdoProjectManager.Services;
 
@@ -101,30 +102,24 @@ public class ProjectWizardService : IProjectWizardService
             {
                 Success = true,
                 StartTime = DateTime.UtcNow,
-                TotalSteps = 4
+                TotalSteps = 3
             };
 
-            _logger.LogInformation("📝 Step 1/4: Analyzing work item differences");
+            _logger.LogInformation("📝 Step 1/3: Analyzing work item differences");
             result.WorkItemsCloned = await CloneWorkItems(sourceConn, targetConn, request.SourceProjectId, request.TargetProjectId);
             _logger.LogInformation("✅ Work item analysis completed: {Count} updates identified", result.WorkItemsCloned);
 
-            _logger.LogInformation("📂 Step 2/4: Analyzing classification node differences");
-            var classificationNodesCloned = await CloneClassificationNodes(sourceConn, targetConn, request.SourceProjectId, request.TargetProjectId);
-            result.AreaPathsCloned = classificationNodesCloned / 2; // Assuming half are area paths
-            result.IterationPathsCloned = classificationNodesCloned / 2; // Assuming half are iteration paths
-            _logger.LogInformation("✅ Classification node analysis completed: {Count} updates identified", classificationNodesCloned);
-
-            _logger.LogInformation("🔐 Step 3/4: Analyzing security group differences");
+            _logger.LogInformation("� Step 2/3: Analyzing security group differences");
             result.SecurityGroupsCloned = await CloneSecurityGroups(sourceConn, targetConn, request.SourceProjectId, request.TargetProjectId);
             _logger.LogInformation("✅ Security group analysis completed: {Count} updates identified", result.SecurityGroupsCloned);
 
-            _logger.LogInformation("📚 Step 4/4: Analyzing wiki page differences");
+            _logger.LogInformation("📚 Step 3/3: Analyzing wiki page differences");
             result.WikiPagesCloned = await CloneWikiPages(sourceConn, targetConn, request.SourceProjectId, request.TargetProjectId);
             _logger.LogInformation("✅ Wiki page analysis completed: {Count} updates identified", result.WikiPagesCloned);
 
             result.EndTime = DateTime.UtcNow;
             result.Duration = result.EndTime - result.StartTime;
-            result.CompletedSteps = 4;
+            result.CompletedSteps = 3;
 
             return result;
         }
@@ -750,104 +745,6 @@ public class ProjectWizardService : IProjectWizardService
         }
     }
 
-    private async Task<int> CloneClassificationNodes(VssConnection sourceConn, VssConnection targetConn, string sourceProjectId, string targetProjectId)
-    {
-        _logger.LogInformation("🔍 Analyzing classification node differences between source and target projects...");
-        
-        try
-        {
-            var sourceClient = sourceConn.GetClient<WorkItemTrackingHttpClient>();
-            var targetClient = targetConn.GetClient<WorkItemTrackingHttpClient>();
-            
-            // Get source project details
-            var sourceProjectClient = sourceConn.GetClient<ProjectHttpClient>();
-            var targetProjectClient = targetConn.GetClient<ProjectHttpClient>();
-            
-            var sourceProject = await sourceProjectClient.GetProject(sourceProjectId);
-            var targetProject = await targetProjectClient.GetProject(targetProjectId);
-            
-            // Compare Area Paths
-            var sourceAreas = await sourceClient.GetClassificationNodeAsync(sourceProject.Name, TreeStructureGroup.Areas, depth: 10);
-            var targetAreas = await targetClient.GetClassificationNodeAsync(targetProject.Name, TreeStructureGroup.Areas, depth: 10);
-            
-            // Compare Iteration Paths  
-            var sourceIterations = await sourceClient.GetClassificationNodeAsync(sourceProject.Name, TreeStructureGroup.Iterations, depth: 10);
-            var targetIterations = await targetClient.GetClassificationNodeAsync(targetProject.Name, TreeStructureGroup.Iterations, depth: 10);
-            
-            var areasDiff = CompareClassificationNodes(sourceAreas, targetAreas, "Area Paths");
-            var iterationsDiff = CompareClassificationNodes(sourceIterations, targetIterations, "Iteration Paths");
-            
-            var totalDifferences = areasDiff + iterationsDiff;
-            
-            if (totalDifferences > 0)
-            {
-                _logger.LogWarning("⚠️ Classification node synchronization requires manual intervention:");
-                _logger.LogWarning("   • Review the differences above");
-                _logger.LogWarning("   • Create/update classification nodes manually in target project");
-                _logger.LogWarning("   • Or implement automatic sync with user confirmation");
-            }
-            else
-            {
-                _logger.LogInformation("✅ All classification nodes are synchronized");
-            }
-            
-            return 0; // Return 0 since no automatic updates were performed
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning("⚠️ Could not analyze classification node differences: {Error}", ex.Message);
-            _logger.LogInformation("📝 Manual classification node review recommended between source and target projects");
-            return 0;
-        }
-    }
-    
-    private int CompareClassificationNodes(WorkItemClassificationNode source, WorkItemClassificationNode target, string nodeType)
-    {
-        var differences = 0;
-        var sourceNodes = FlattenNodes(source).ToList();
-        var targetNodes = FlattenNodes(target).ToList();
-        
-        _logger.LogInformation("📊 {NodeType}: Source has {SourceCount} nodes, Target has {TargetCount} nodes", 
-            nodeType, sourceNodes.Count, targetNodes.Count);
-        
-        foreach (var sourceNode in sourceNodes)
-        {
-            var targetNode = targetNodes.FirstOrDefault(tn => tn.Path?.Equals(sourceNode.Path, StringComparison.OrdinalIgnoreCase) == true);
-            
-            if (targetNode == null)
-            {
-                _logger.LogInformation("➕ Missing {NodeType}: '{Path}'", nodeType, sourceNode.Path);
-                differences++;
-            }
-            else if (targetNode.Name != sourceNode.Name)
-            {
-                _logger.LogInformation("🔄 {NodeType} name difference: '{TargetName}' → '{SourceName}'", 
-                    nodeType, targetNode.Name, sourceNode.Name);
-                differences++;
-            }
-        }
-        
-        return differences;
-    }
-    
-    private IEnumerable<WorkItemClassificationNode> FlattenNodes(WorkItemClassificationNode node)
-    {
-        if (node == null) yield break;
-        
-        yield return node;
-        
-        if (node.Children != null)
-        {
-            foreach (var child in node.Children)
-            {
-                foreach (var descendant in FlattenNodes(child))
-                {
-                    yield return descendant;
-                }
-            }
-        }
-    }
-
     private async Task<int> CloneWikiPages(VssConnection sourceConn, VssConnection targetConn, string sourceProjectId, string targetProjectId)
     {
         _logger.LogInformation("🔍 Analyzing wiki page differences between source and target projects...");
@@ -891,11 +788,11 @@ public class ProjectWizardService : IProjectWizardService
             // Analyze work item differences
             analysis.WorkItems = await AnalyzeWorkItemDifferencesDetailed(sourceConn, targetConn, sourceProjectId, targetProjectId);
             
-            // Analyze classification node differences  
-            analysis.ClassificationNodes = await AnalyzeClassificationNodeDifferencesDetailed(sourceConn, targetConn, sourceProjectId, targetProjectId);
-            
             // Analyze security group differences (if permissions allow)
             analysis.SecurityGroups = await AnalyzeSecurityGroupDifferencesDetailed(sourceConn, targetConn, sourceProjectId, targetProjectId);
+            
+            // Analyze query differences
+            analysis.Queries = await AnalyzeQueryDifferencesDetailed(sourceConn, targetConn, sourceProjectId, targetProjectId);
             
             // Wiki analysis - manual guidance
             analysis.Wiki = new WikiDifferences
@@ -960,19 +857,6 @@ public class ProjectWizardService : IProjectWizardService
             result.WorkItemsUpdated = workItemResults.Item2;
             totalUpdates += workItemResults.Item1 + workItemResults.Item2;
             
-            // Apply selected classification node updates
-            result.OperationLogs.Add(new OperationLog 
-            { 
-                IsSuccess = true, 
-                Message = "Processing classification node updates", 
-                OperationType = "ClassificationNodes",
-                Timestamp = DateTime.UtcNow
-            });
-
-            var classificationUpdates = await ApplySelectedClassificationNodeUpdates(sourceConn, targetConn, request, result.OperationLogs);
-            result.AreaPathsCloned += classificationUpdates;
-            totalUpdates += classificationUpdates;
-            
             // Apply selected security group updates
             result.OperationLogs.Add(new OperationLog 
             { 
@@ -985,6 +869,18 @@ public class ProjectWizardService : IProjectWizardService
             var securityUpdates = await ApplySelectedSecurityGroupUpdates(sourceConn, targetConn, request, result.OperationLogs);
             result.SecurityGroupsCloned = securityUpdates;
             totalUpdates += securityUpdates;
+            
+            // Apply selected query updates
+            result.OperationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = true, 
+                Message = "Processing query updates", 
+                OperationType = "Queries",
+                Timestamp = DateTime.UtcNow
+            });
+
+            var queryUpdates = await ApplySelectedQueryUpdates(sourceConn, targetConn, request, result.OperationLogs);
+            totalUpdates += queryUpdates;
             
             result.Success = true;
             result.EndTime = DateTime.UtcNow;
@@ -1203,80 +1099,6 @@ public class ProjectWizardService : IProjectWizardService
         {
             _logger.LogWarning("⚠️ Could not analyze work item differences: {Error}", ex.Message);
             return differences;
-        }
-    }
-
-    private async Task<ClassificationNodeDifferences> AnalyzeClassificationNodeDifferencesDetailed(VssConnection sourceConn, VssConnection targetConn, string sourceProjectId, string targetProjectId)
-    {
-        var differences = new ClassificationNodeDifferences();
-        
-        try
-        {
-            var sourceClient = sourceConn.GetClient<WorkItemTrackingHttpClient>();
-            var targetClient = targetConn.GetClient<WorkItemTrackingHttpClient>();
-            
-            var sourceProjectClient = sourceConn.GetClient<ProjectHttpClient>();
-            var targetProjectClient = targetConn.GetClient<ProjectHttpClient>();
-            
-            var sourceProject = await sourceProjectClient.GetProject(sourceProjectId);
-            var targetProject = await targetProjectClient.GetProject(targetProjectId);
-            
-            // Analyze Area Paths
-            var sourceAreas = await sourceClient.GetClassificationNodeAsync(sourceProject.Name, TreeStructureGroup.Areas, depth: 10);
-            var targetAreas = await targetClient.GetClassificationNodeAsync(targetProject.Name, TreeStructureGroup.Areas, depth: 10);
-            
-            CompareClassificationNodesDetailed(sourceAreas, targetAreas, "Area Paths", differences.MissingAreaPaths, differences.DifferentAreaPaths);
-            
-            // Analyze Iteration Paths  
-            var sourceIterations = await sourceClient.GetClassificationNodeAsync(sourceProject.Name, TreeStructureGroup.Iterations, depth: 10);
-            var targetIterations = await targetClient.GetClassificationNodeAsync(targetProject.Name, TreeStructureGroup.Iterations, depth: 10);
-            
-            CompareClassificationNodesDetailed(sourceIterations, targetIterations, "Iteration Paths", differences.MissingIterationPaths, differences.DifferentIterationPaths);
-            
-            return differences;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning("⚠️ Could not analyze classification node differences: {Error}", ex.Message);
-            return differences;
-        }
-    }
-
-    private void CompareClassificationNodesDetailed(WorkItemClassificationNode source, WorkItemClassificationNode target, string nodeType, 
-        List<ClassificationNodeDifference> missingNodes, List<ClassificationNodeDifference> differentNodes)
-    {
-        var sourceNodes = FlattenNodes(source).ToList();
-        var targetNodes = FlattenNodes(target).ToList();
-        
-        foreach (var sourceNode in sourceNodes)
-        {
-            var targetNode = targetNodes.FirstOrDefault(tn => tn.Path?.Equals(sourceNode.Path, StringComparison.OrdinalIgnoreCase) == true);
-            
-            if (targetNode == null)
-            {
-                missingNodes.Add(new ClassificationNodeDifference
-                {
-                    Path = sourceNode.Path ?? "",
-                    Name = sourceNode.Name ?? "",
-                    NodeType = nodeType,
-                    DifferenceType = "Missing",
-                    Description = $"Missing {nodeType.ToLower()}: '{sourceNode.Path}'",
-                    Selected = false // User can select to create
-                });
-            }
-            else if (targetNode.Name != sourceNode.Name)
-            {
-                differentNodes.Add(new ClassificationNodeDifference
-                {
-                    Path = sourceNode.Path ?? "",
-                    Name = sourceNode.Name ?? "",
-                    TargetName = targetNode.Name,
-                    NodeType = nodeType,
-                    DifferenceType = "NameDifferent",
-                    Description = $"{nodeType} name difference at '{sourceNode.Path}': '{targetNode.Name}' → '{sourceNode.Name}'",
-                    Selected = false // User can select to rename
-                });
-            }
         }
     }
 
@@ -1503,42 +1325,7 @@ public class ProjectWizardService : IProjectWizardService
         return (createdCount, updatedCount);
     }
 
-    private async Task<int> ApplySelectedClassificationNodeUpdates(VssConnection sourceConn, VssConnection targetConn, SelectiveUpdateRequest request, List<OperationLog> operationLogs)
-    {
-        var updatesApplied = 0;
-        
-        // Apply selected missing area paths
-        foreach (var missingArea in request.Differences.ClassificationNodes.MissingAreaPaths.Where(cn => cn.Selected))
-        {
-            _logger.LogInformation("➕ Creating area path: {Path}", missingArea.Path);
-            // Implementation would create the area path
-            operationLogs.Add(new OperationLog 
-            { 
-                IsSuccess = true, 
-                Message = $"Created area path: {missingArea.Path}", 
-                OperationType = "AreaPath",
-                Timestamp = DateTime.UtcNow
-            });
-            updatesApplied++;
-        }
-        
-        // Apply selected missing iteration paths
-        foreach (var missingIteration in request.Differences.ClassificationNodes.MissingIterationPaths.Where(cn => cn.Selected))
-        {
-            _logger.LogInformation("➕ Creating iteration path: {Path}", missingIteration.Path);
-            // Implementation would create the iteration path
-            operationLogs.Add(new OperationLog 
-            { 
-                IsSuccess = true, 
-                Message = $"Created iteration path: {missingIteration.Path}", 
-                OperationType = "IterationPath",
-                Timestamp = DateTime.UtcNow
-            });
-            updatesApplied++;
-        }
-        
-        return await Task.FromResult(updatesApplied);
-    }
+
 
     private async Task<int> ApplySelectedSecurityGroupUpdates(VssConnection sourceConn, VssConnection targetConn, SelectiveUpdateRequest request, List<OperationLog> operationLogs)
     {
@@ -1578,5 +1365,657 @@ public class ProjectWizardService : IProjectWizardService
         }
         
         return await Task.FromResult(updatesApplied);
+    }
+    
+    private async Task<int> ApplySelectedQueryUpdates(VssConnection sourceConn, VssConnection targetConn, SelectiveUpdateRequest request, List<OperationLog> operationLogs)
+    {
+        var updatesApplied = 0;
+        
+        _logger.LogInformation("🔄 Starting ApplySelectedQueryUpdates - Folders: {FolderCount}, New: {NewCount}, Updated: {UpdatedCount}", 
+            request.Differences.Queries.MissingFolders.Count(f => f.Selected),
+            request.Differences.Queries.NewQueries.Count(f => f.Selected),
+            request.Differences.Queries.UpdatedQueries.Count(f => f.Selected));
+        
+        try
+        {
+            var sourceWorkItemClient = sourceConn.GetClient<WorkItemTrackingHttpClient>();
+            var targetWorkItemClient = targetConn.GetClient<WorkItemTrackingHttpClient>();
+            
+            // Get the project names from the GUIDs - Azure DevOps API expects project names for query operations
+            var projectClient = sourceConn.GetClient<ProjectHttpClient>();
+            var sourceProject = await projectClient.GetProject(request.SourceProjectId);
+            var targetProject = await projectClient.GetProject(request.TargetProjectId);
+            
+            if (sourceProject == null || targetProject == null)
+            {
+                _logger.LogError("❌ Could not retrieve project information for source ({SourceId}) or target ({TargetId})", 
+                    request.SourceProjectId, request.TargetProjectId);
+                return 0;
+            }
+            
+            _logger.LogInformation("📋 Using project names - Source: {SourceName}, Target: {TargetName}", 
+                sourceProject.Name, targetProject.Name);
+            
+            // Create missing folders first
+            foreach (var folder in request.Differences.Queries.MissingFolders.Where(f => f.Selected))
+            {
+                // Skip creating Recycle Bin folders
+                if (folder.Path?.Contains("Recycle Bin", StringComparison.OrdinalIgnoreCase) == true ||
+                    folder.Name?.Equals("Recycle Bin", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    _logger.LogInformation("⏭️ Skipping Recycle Bin folder creation: {FolderPath}", folder.Path);
+                    continue;
+                }
+                
+                try
+                {
+                    _logger.LogInformation("📁 Creating query folder: {FolderPath}", folder.Path);
+                    
+                    if (string.IsNullOrEmpty(folder.Path))
+                    {
+                        _logger.LogWarning("⚠️ Skipping folder with empty path: {FolderName}", folder.Name);
+                        continue;
+                    }
+                    
+                    var folderParts = folder.Path.Split('/');
+                    var parentPath = "";
+                    
+                    // Create folder hierarchy if needed
+                    for (int i = 0; i < folderParts.Length; i++)
+                    {
+                        var currentPath = string.Join("/", folderParts.Take(i + 1));
+                        var folderName = folderParts[i];
+                        
+                        // Check if folder already exists
+                        var existingFolders = await targetWorkItemClient.GetQueriesAsync(request.TargetProjectId, QueryExpand.All, 1, true);
+                        var exists = CheckIfFolderExists(existingFolders, currentPath);
+                        
+                        if (!exists)
+                        {
+                            var queryFolder = new QueryHierarchyItem
+                            {
+                                Name = folderName,
+                                IsFolder = true,
+                                IsPublic = true // Default to public for folders
+                            };
+                            
+                            var parentFolderId = GetParentFolderId(existingFolders, parentPath);
+                            await targetWorkItemClient.CreateQueryAsync(queryFolder, request.TargetProjectId, parentFolderId);
+                            
+                            operationLogs.Add(new OperationLog 
+                            { 
+                                IsSuccess = true, 
+                                Message = $"Created query folder: {currentPath}", 
+                                OperationType = "Query",
+                                Timestamp = DateTime.UtcNow
+                            });
+                            updatesApplied++;
+                        }
+                        
+                        parentPath = currentPath;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ Failed to create query folder: {FolderPath}", folder.Path);
+                    operationLogs.Add(new OperationLog 
+                    { 
+                        IsSuccess = false, 
+                        Message = $"Failed to create query folder: {folder.Path}", 
+                        Details = ex.Message,
+                        OperationType = "Query",
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+            }
+            
+            // Create new queries
+            foreach (var query in request.Differences.Queries.NewQueries.Where(q => q.Selected))
+            {
+                // Skip creating Recycle Bin queries
+                if (query.Path?.Contains("Recycle Bin", StringComparison.OrdinalIgnoreCase) == true ||
+                    query.Name?.Equals("Recycle Bin", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    _logger.LogInformation("⏭️ Skipping Recycle Bin query creation: {QueryName}", query.Name);
+                    continue;
+                }
+                
+                try
+                {
+                    _logger.LogInformation("📊 Creating query: {QueryName} (ID: {QueryId})", query.Name, query.QueryId);
+                    
+                    // Skip folders - only process actual queries
+                    if (query.QueryType == "Folder")
+                    {
+                        _logger.LogInformation("📁 Skipping folder: {FolderName}", query.Name);
+                        continue;
+                    }
+                    
+                    // Get the source query details using the project name with full expansion
+                    var sourceQuery = await sourceWorkItemClient.GetQueryAsync(sourceProject.Name, query.QueryId, QueryExpand.All, includeDeleted: false);
+                    
+                    if (sourceQuery != null)
+                    {
+                        _logger.LogInformation("🔍 Retrieved query details - Name: '{QueryName}', Type: {QueryType}, IsFolder: {IsFolder}, HasWiql: {HasWiql}", 
+                            sourceQuery.Name, sourceQuery.QueryType, sourceQuery.IsFolder, !string.IsNullOrEmpty(sourceQuery.Wiql));
+                        
+                        // Double-check that this is not a folder and has WIQL content
+                        if (sourceQuery.IsFolder != true && !string.IsNullOrEmpty(sourceQuery.Wiql))
+                        {
+                            // Transform WIQL to reference target project instead of source project
+                            var transformedWiql = TransformWiqlForTargetProject(sourceQuery.Wiql, sourceProject.Name, targetProject.Name);
+                            
+                            var newQuery = new QueryHierarchyItem
+                            {
+                                Name = sourceQuery.Name,
+                                Wiql = transformedWiql,
+                                QueryType = sourceQuery.QueryType,
+                                IsPublic = sourceQuery.IsPublic
+                            };
+                            
+                            // Determine parent folder
+                            var targetQueries = await targetWorkItemClient.GetQueriesAsync(targetProject.Name, QueryExpand.All, 2, true);
+                            
+                            // Find the "Shared Queries" folder in the target project
+                            var sharedQueriesFolder = targetQueries.FirstOrDefault(q => 
+                                q.Name.Equals("Shared Queries", StringComparison.OrdinalIgnoreCase) && q.IsFolder == true);
+                            
+                            string? parentFolderId = null;
+                            
+                            if (string.IsNullOrEmpty(query.Path) || query.Path == "Shared Queries")
+                            {
+                                // Query is directly in Shared Queries folder - use the Shared Queries folder ID
+                                parentFolderId = sharedQueriesFolder?.Id.ToString();
+                            }
+                            else if (query.Path.StartsWith("Shared Queries/", StringComparison.OrdinalIgnoreCase))
+                            {
+                                // Query is in a subfolder of Shared Queries
+                                parentFolderId = GetParentFolderIdFromPath(targetQueries, query.Path, query.Name);
+                            }
+                            else
+                            {
+                                // Fallback - if path doesn't start with "Shared Queries", put it in Shared Queries folder
+                                parentFolderId = sharedQueriesFolder?.Id.ToString();
+                            }
+                            
+                            _logger.LogInformation("🗂️ Parent folder analysis - Query path: '{QueryPath}', Parent folder ID: '{ParentFolderId}', Shared Queries ID: '{SharedQueriesId}'", 
+                                query.Path, parentFolderId ?? "null (root level)", sharedQueriesFolder?.Id.ToString() ?? "not found");
+                            
+                            // Log detailed query creation attempt
+                            _logger.LogInformation("📝 Attempting to create query - Name: '{QueryName}', Type: {QueryType}, Project: '{ProjectName}', Parent: '{ParentFolderId}'", 
+                                newQuery.Name, newQuery.QueryType, targetProject.Name, parentFolderId ?? "null");
+                            
+                            try
+                            {
+                                await targetWorkItemClient.CreateQueryAsync(newQuery, targetProject.Name, parentFolderId);
+                                
+                                operationLogs.Add(new OperationLog 
+                                { 
+                                    IsSuccess = true, 
+                                    Message = $"Created query: {query.Name}", 
+                                    Details = $"Path: {query.Path}",
+                                    OperationType = "Query",
+                                    Timestamp = DateTime.UtcNow
+                                });
+                                updatesApplied++;
+                                _logger.LogInformation("✅ Successfully created query: {QueryName}", query.Name);
+                            }
+                            catch (Exception createEx)
+                            {
+                                _logger.LogError(createEx, "❌ Failed to create query '{QueryName}' - Error: {ErrorMessage}", 
+                                    query.Name, createEx.Message);
+                                
+                                operationLogs.Add(new OperationLog 
+                                { 
+                                    IsSuccess = false, 
+                                    Message = $"Failed to create query: {query.Name}", 
+                                    Details = $"Error: {createEx.Message}",
+                                    OperationType = "Query",
+                                    Timestamp = DateTime.UtcNow
+                                });
+                            }
+                        }
+                        else if (sourceQuery.IsFolder == true)
+                        {
+                            _logger.LogInformation("📁 Skipping folder: {FolderName} (ID: {QueryId})", sourceQuery.Name, query.QueryId);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("⚠️ Source query {QueryName} (ID: {QueryId}) has no WIQL content", sourceQuery.Name ?? "Unknown", query.QueryId);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("⚠️ Source query with ID {QueryId} not found", query.QueryId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ Failed to create query: {QueryName}", query.Name);
+                    operationLogs.Add(new OperationLog 
+                    { 
+                        IsSuccess = false, 
+                        Message = $"Failed to create query: {query.Name}", 
+                        Details = ex.Message,
+                        OperationType = "Query",
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+            }
+            
+            // Update existing queries
+            foreach (var query in request.Differences.Queries.UpdatedQueries.Where(q => q.Selected))
+            {
+                // Skip updating Recycle Bin queries
+                if (query.Path?.Contains("Recycle Bin", StringComparison.OrdinalIgnoreCase) == true ||
+                    query.Name?.Equals("Recycle Bin", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    _logger.LogInformation("⏭️ Skipping Recycle Bin query update: {QueryName}", query.Name);
+                    continue;
+                }
+                
+                try
+                {
+                    _logger.LogInformation("🔄 Updating query: {QueryName} (ID: {QueryId})", query.Name, query.QueryId);
+                    
+                    // Get the source query details using the project name
+                    var sourceQuery = await sourceWorkItemClient.GetQueryAsync(sourceProject.Name, query.QueryId);
+                    
+                    if (sourceQuery != null)
+                    {
+                        // Find the target query to update
+                        var targetQueries = await targetWorkItemClient.GetQueriesAsync(targetProject.Name, QueryExpand.All, 2, true);
+                        var targetQuery = FindQueryByPath(targetQueries, query.Path ?? string.Empty);
+                        
+                        if (targetQuery != null)
+                        {
+                            // Transform WIQL to reference target project instead of source project
+                            var transformedWiql = TransformWiqlForTargetProject(sourceQuery.Wiql, sourceProject.Name, targetProject.Name);
+                            
+                            var updatedQuery = new QueryHierarchyItem
+                            {
+                                Name = sourceQuery.Name,
+                                Wiql = transformedWiql,
+                                QueryType = sourceQuery.QueryType,
+                                IsPublic = sourceQuery.IsPublic
+                            };
+                            
+                            await targetWorkItemClient.UpdateQueryAsync(updatedQuery, targetProject.Name, targetQuery.Id.ToString());
+                            
+                            operationLogs.Add(new OperationLog 
+                            { 
+                                IsSuccess = true, 
+                                Message = $"Updated query: {query.Name}", 
+                                Details = $"Path: {query.Path}",
+                                OperationType = "Query",
+                                Timestamp = DateTime.UtcNow
+                            });
+                            updatesApplied++;
+                            _logger.LogInformation("✅ Successfully updated query: {QueryName}", query.Name);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("⚠️ Target query not found at path: {QueryPath}", query.Path);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("⚠️ Source query {QueryName} (ID: {QueryId}) not found", query.Name, query.QueryId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "❌ Failed to update query: {QueryName}", query.Name);
+                    operationLogs.Add(new OperationLog 
+                    { 
+                        IsSuccess = false, 
+                        Message = $"Failed to update query: {query.Name}", 
+                        Details = ex.Message,
+                        OperationType = "Query",
+                        Timestamp = DateTime.UtcNow
+                    });
+                }
+            }
+            
+            _logger.LogInformation("✅ Query updates completed: {UpdatesApplied} changes applied", updatesApplied);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ Failed to apply query updates");
+            operationLogs.Add(new OperationLog 
+            { 
+                IsSuccess = false, 
+                Message = "Failed to apply query updates", 
+                Details = ex.Message,
+                OperationType = "Query",
+                Timestamp = DateTime.UtcNow
+            });
+        }
+        
+        return updatesApplied;
+    }
+    
+    private bool CheckIfFolderExists(IEnumerable<QueryHierarchyItem> queries, string folderPath)
+    {
+        return FlattenQueryHierarchy(queries).Any(q => 
+            q.IsFolder == true && 
+            q.Path?.Equals(folderPath, StringComparison.OrdinalIgnoreCase) == true);
+    }
+    
+    private string? GetParentFolderId(IEnumerable<QueryHierarchyItem> queries, string parentPath)
+    {
+        if (string.IsNullOrEmpty(parentPath))
+            return null; // Root level
+            
+        var parentFolder = FlattenQueryHierarchy(queries).FirstOrDefault(q => 
+            q.IsFolder == true && 
+            q.Path?.Equals(parentPath, StringComparison.OrdinalIgnoreCase) == true);
+            
+        return parentFolder?.Id.ToString();
+    }
+    
+    private string? GetParentFolderIdFromPath(IEnumerable<QueryHierarchyItem> queries, string fullPath, string queryName)
+    {
+        if (string.IsNullOrEmpty(fullPath) || fullPath == queryName)
+            return null; // Root level
+            
+        var parentPath = fullPath.Substring(0, fullPath.LastIndexOf('/' + queryName));
+        return GetParentFolderId(queries, parentPath);
+    }
+    
+    private QueryHierarchyItem? FindQueryByPath(IEnumerable<QueryHierarchyItem> queries, string queryPath)
+    {
+        return FlattenQueryHierarchy(queries).FirstOrDefault(q => 
+            q.Path?.Equals(queryPath, StringComparison.OrdinalIgnoreCase) == true);
+    }
+    
+    private async Task<QueryDifferences> AnalyzeQueryDifferencesDetailed(VssConnection sourceConn, VssConnection targetConn, string sourceProjectId, string targetProjectId)
+    {
+        _logger.LogInformation("🔍 Analyzing work item query differences between projects - Source: {SourceProject}, Target: {TargetProject}", sourceProjectId, targetProjectId);
+        
+        var differences = new QueryDifferences();
+        
+        try
+        {
+            var sourceWorkItemClient = sourceConn.GetClient<WorkItemTrackingHttpClient>();
+            var targetWorkItemClient = targetConn.GetClient<WorkItemTrackingHttpClient>();
+            
+            // Get all queries from source project (includes folders and queries) - force fresh retrieval
+            var sourceQueries = await sourceWorkItemClient.GetQueriesAsync(sourceProjectId, QueryExpand.All, 2, true);
+            
+            // Force a small delay and fresh retrieval for target to avoid caching issues
+            await Task.Delay(100);
+            var targetQueries = await targetWorkItemClient.GetQueriesAsync(targetProjectId, QueryExpand.All, 2, true);
+            
+            _logger.LogInformation("📋 Retrieved {SourceTotal} total source query items and {TargetTotal} total target query items", 
+                sourceQueries.Count, targetQueries.Count);
+                
+            // Log the top-level folders for debugging
+            _logger.LogInformation("🔍 Source top-level folders: {SourceFolders}", 
+                string.Join(", ", sourceQueries.Select(q => $"{q.Name} (IsFolder: {q.IsFolder}, IsDeleted: {q.IsDeleted})")));
+            _logger.LogInformation("🔍 Target top-level folders: {TargetFolders}", 
+                string.Join(", ", targetQueries.Select(q => $"{q.Name} (IsFolder: {q.IsFolder}, IsDeleted: {q.IsDeleted})")));
+            
+            // Filter to only "Shared Queries" folder and its contents - exclude any deleted or recycled items
+            var sourceSharedQueriesFolder = sourceQueries.FirstOrDefault(q => 
+                q.Name.Equals("Shared Queries", StringComparison.OrdinalIgnoreCase) && 
+                q.IsDeleted != true);
+            var targetSharedQueriesFolder = targetQueries.FirstOrDefault(q => 
+                q.Name.Equals("Shared Queries", StringComparison.OrdinalIgnoreCase) && 
+                q.IsDeleted != true);
+            
+            if (sourceSharedQueriesFolder == null)
+            {
+                _logger.LogWarning("⚠️ No 'Shared Queries' folder found in source project {SourceProject}", sourceProjectId);
+                return differences;
+            }
+            
+            _logger.LogInformation("✅ Found 'Shared Queries' folder in source project with {ChildCount} children", 
+                sourceSharedQueriesFolder.Children?.Count ?? 0);
+            
+            if (targetSharedQueriesFolder != null)
+            {
+                _logger.LogInformation("✅ Found 'Shared Queries' folder in target project with {ChildCount} children", 
+                    targetSharedQueriesFolder.Children?.Count ?? 0);
+            }
+            else
+            {
+                _logger.LogInformation("ℹ️ No 'Shared Queries' folder found in target project - will create one if needed");
+            }
+            
+            // Flatten only shared queries and their subfolders/contents
+            var sourceFlattened = sourceSharedQueriesFolder?.Children != null ? 
+                FlattenQueryHierarchy(sourceSharedQueriesFolder.Children, "Shared Queries") : 
+                new List<QueryHierarchyItem>();
+            var targetFlattened = targetSharedQueriesFolder?.Children != null ? 
+                FlattenQueryHierarchy(targetSharedQueriesFolder.Children, "Shared Queries") : 
+                new List<QueryHierarchyItem>();
+            
+            _logger.LogInformation("📊 Before filtering - Source: {SourceCount} items, Target: {TargetCount} items", 
+                sourceFlattened.Count, targetFlattened.Count);
+            
+            // Filter out Recycle Bin queries and folders from both source and target (in case they exist within Shared Queries)
+            sourceFlattened = FilterOutRecycleBinQueries(sourceFlattened);
+            targetFlattened = FilterOutRecycleBinQueries(targetFlattened);
+            
+            // Additional validation: Ensure all items are under "Shared Queries" path AND not deleted
+            sourceFlattened = sourceFlattened.Where(s => 
+                s.Path?.StartsWith("Shared Queries", StringComparison.OrdinalIgnoreCase) == true &&
+                s.IsDeleted != true &&
+                !IsRecycleBinQuery(s)).ToList();
+            targetFlattened = targetFlattened.Where(t => 
+                t.Path?.StartsWith("Shared Queries", StringComparison.OrdinalIgnoreCase) == true &&
+                t.IsDeleted != true &&
+                !IsRecycleBinQuery(t)).ToList();
+            
+            _logger.LogInformation("📊 After filtering Recycle Bin - Source: {SourceCount} items, Target: {TargetCount} items", 
+                sourceFlattened.Count, targetFlattened.Count);
+                
+            // Log the actual items being analyzed for debugging
+            _logger.LogInformation("🔍 Source items: {SourceItems}", 
+                string.Join(", ", sourceFlattened.Select(s => $"{s.Name} ({s.Path}) [{(s.IsFolder == true ? "Folder" : "Query")}]")));
+            _logger.LogInformation("🔍 Target items: {TargetItems}", 
+                string.Join(", ", targetFlattened.Select(t => $"{t.Name} ({t.Path}) [{(t.IsFolder == true ? "Folder" : "Query")}]")));
+            
+            // Analyze differences
+            foreach (var sourceItem in sourceFlattened)
+            {
+                _logger.LogDebug("🔍 Analyzing source item: {Name} at path {Path} (IsFolder: {IsFolder})", 
+                    sourceItem.Name, sourceItem.Path, sourceItem.IsFolder);
+                    
+                var targetMatch = targetFlattened.FirstOrDefault(t => 
+                    t.Path?.Equals(sourceItem.Path, StringComparison.OrdinalIgnoreCase) == true);
+                
+                if (targetMatch == null)
+                {
+                    _logger.LogDebug("➕ No target match found for: {Name} at {Path}", sourceItem.Name, sourceItem.Path);
+                    
+                    // New query or folder
+                    var diff = CreateQueryDifference(sourceItem, "New", 
+                        sourceItem.IsFolder == true ? "New folder to be created" : "New query to be created");
+                    
+                    if (sourceItem.IsFolder == true)
+                        differences.MissingFolders.Add(diff);
+                    else
+                        differences.NewQueries.Add(diff);
+                }
+                else
+                {
+                    _logger.LogDebug("🔄 Target match found for: {Name} - checking for differences", sourceItem.Name);
+                    
+                    // Check if query content differs (only for actual queries, not folders)
+                    if (sourceItem.IsFolder != true && targetMatch.IsFolder != true)
+                    {
+                        var hasChanges = false;
+                        var changeDescription = new List<string>();
+                        
+                        if (!string.Equals(sourceItem.Wiql, targetMatch.Wiql, StringComparison.OrdinalIgnoreCase))
+                        {
+                            hasChanges = true;
+                            changeDescription.Add("WIQL query differs");
+                        }
+                        
+                        if (sourceItem.IsPublic != targetMatch.IsPublic)
+                        {
+                            hasChanges = true;
+                            changeDescription.Add($"Visibility differs (source: {(sourceItem.IsPublic == true ? "Public" : "Private")}, target: {(targetMatch.IsPublic == true ? "Public" : "Private")})");
+                        }
+                        
+                        if (hasChanges)
+                        {
+                            var diff = CreateQueryDifference(sourceItem, "Update", string.Join(", ", changeDescription));
+                            differences.UpdatedQueries.Add(diff);
+                        }
+                        else
+                        {
+                            var diff = CreateQueryDifference(sourceItem, "Synchronized", "Query is identical in both projects");
+                            differences.SynchronizedQueries.Add(diff);
+                        }
+                    }
+                }
+            }
+            
+            _logger.LogInformation("✅ Query analysis completed: {NewCount} new, {UpdatedCount} updated, {SyncCount} synchronized, {FolderCount} missing folders",
+                differences.NewQueries.Count, differences.UpdatedQueries.Count, 
+                differences.SynchronizedQueries.Count, differences.MissingFolders.Count);
+                
+            return differences;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "❌ Failed to analyze query differences");
+            
+            // Return empty differences with error info
+            differences.NewQueries.Add(new QueryDifference
+            {
+                Name = "Analysis Error",
+                Description = $"Failed to analyze queries: {ex.Message}",
+                DifferenceType = "Error"
+            });
+            
+            return differences;
+        }
+    }
+    
+    private List<QueryHierarchyItem> FlattenQueryHierarchy(IEnumerable<QueryHierarchyItem> queries, string parentPath = "")
+    {
+        var flattened = new List<QueryHierarchyItem>();
+        
+        foreach (var query in queries)
+        {
+            // Set the full path for this item
+            var currentPath = string.IsNullOrEmpty(parentPath) ? query.Name : $"{parentPath}/{query.Name}";
+            query.Path = currentPath;
+            
+            flattened.Add(query);
+            
+            // Recursively process children
+            if (query.Children?.Any() == true)
+            {
+                flattened.AddRange(FlattenQueryHierarchy(query.Children, currentPath));
+            }
+        }
+        
+        return flattened;
+    }
+    
+    private bool IsRecycleBinQuery(QueryHierarchyItem query)
+    {
+        // Check for direct Recycle Bin names
+        if (query.Name?.Equals("Recycle Bin", StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+            
+        // Check for Recycle Bin in path
+        if (query.Path?.Contains("Recycle Bin", StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+            
+        // Check for special properties that indicate deleted/recycled items
+        // In Azure DevOps, deleted queries often have IsDeleted = true
+        if (query.IsDeleted == true)
+            return true;
+            
+        // Check for queries that might be in Recycle Bin based on folder properties or name patterns
+        if (query.IsFolder == true && 
+            query.Name?.StartsWith("Recycle", StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+            
+        return false;
+    }
+    
+    private List<QueryHierarchyItem> FilterOutRecycleBinQueries(IEnumerable<QueryHierarchyItem> queries)
+    {
+        return queries.Where(q => !IsRecycleBinQuery(q)).ToList();
+    }
+    
+    private string TransformWiqlForTargetProject(string originalWiql, string sourceProjectName, string targetProjectName)
+    {
+        if (string.IsNullOrEmpty(originalWiql))
+            return originalWiql;
+
+        _logger.LogInformation("🔄 Transforming WIQL from source project '{SourceProject}' to target project '{TargetProject}'", 
+            sourceProjectName, targetProjectName);
+        
+        var transformedWiql = originalWiql;
+        
+        // 1. Replace explicit project references in [Team Project] field
+        // Pattern: [Team Project] = 'SourceProjectName'
+        var teamProjectPattern = @"\[Team Project\]\s*=\s*['""]" + Regex.Escape(sourceProjectName) + @"['""]";
+        var teamProjectReplacement = $"[Team Project] = '{targetProjectName}'";
+        transformedWiql = Regex.Replace(transformedWiql, teamProjectPattern, teamProjectReplacement, RegexOptions.IgnoreCase);
+        
+        // 2. Replace project references in area path constraints
+        // Pattern: [Area Path] UNDER 'SourceProjectName' or [Area Path] = 'SourceProjectName'
+        var areaPathUnderPattern = @"\[Area Path\]\s+(UNDER|=)\s*['""]" + Regex.Escape(sourceProjectName) + @"['""]";
+        var areaPathUnderReplacement = $"[Area Path] $1 '{targetProjectName}'";
+        transformedWiql = Regex.Replace(transformedWiql, areaPathUnderPattern, areaPathUnderReplacement, RegexOptions.IgnoreCase);
+        
+        // 3. Replace project references in iteration path constraints
+        // Pattern: [Iteration Path] UNDER 'SourceProjectName' or [Iteration Path] = 'SourceProjectName'
+        var iterationPathUnderPattern = @"\[Iteration Path\]\s+(UNDER|=)\s*['""]" + Regex.Escape(sourceProjectName) + @"['""]";
+        var iterationPathUnderReplacement = $"[Iteration Path] $1 '{targetProjectName}'";
+        transformedWiql = Regex.Replace(transformedWiql, iterationPathUnderPattern, iterationPathUnderReplacement, RegexOptions.IgnoreCase);
+        
+        // 4. Replace any remaining bare project name references (be more careful with this)
+        // Only replace if it's quoted and appears to be a project reference
+        var bareProjectPattern = @"['""]" + Regex.Escape(sourceProjectName) + @"['""]";
+        var bareProjectReplacement = $"'{targetProjectName}'";
+        transformedWiql = Regex.Replace(transformedWiql, bareProjectPattern, bareProjectReplacement, RegexOptions.IgnoreCase);
+        
+        // 5. Remove or fix any cross-project query flags
+        // Remove "Query across projects" or similar flags if they exist
+        transformedWiql = Regex.Replace(transformedWiql, @"@@project\s*=\s*['""][^'""]*['""]", "", RegexOptions.IgnoreCase);
+        
+        // Log the transformation
+        if (!string.Equals(originalWiql, transformedWiql, StringComparison.Ordinal))
+        {
+            _logger.LogInformation("✅ WIQL transformed successfully - project references updated from '{SourceProject}' to '{TargetProject}'", 
+                sourceProjectName, targetProjectName);
+            _logger.LogInformation("🔍 Original WIQL (first 200 chars): {OriginalWiql}", 
+                originalWiql.Length > 200 ? originalWiql.Substring(0, 200) + "..." : originalWiql);
+            _logger.LogInformation("🎯 Transformed WIQL (first 200 chars): {TransformedWiql}", 
+                transformedWiql.Length > 200 ? transformedWiql.Substring(0, 200) + "..." : transformedWiql);
+        }
+        else
+        {
+            _logger.LogInformation("ℹ️ No project references found in WIQL for '{SourceProject}' - no transformation needed", sourceProjectName);
+            _logger.LogDebug("📝 WIQL content: {WiqlContent}", originalWiql);
+        }
+        
+        return transformedWiql;
+    }
+    
+    private QueryDifference CreateQueryDifference(QueryHierarchyItem queryItem, string differenceType, string description)
+    {
+        return new QueryDifference
+        {
+            QueryId = queryItem.Id.ToString(),
+            Name = queryItem.Name ?? "",
+            Path = queryItem.Path ?? "",
+            QueryType = queryItem.QueryType?.ToString() ?? (queryItem.IsFolder == true ? "Folder" : "Unknown"),
+            Wiql = queryItem.Wiql,
+            DifferenceType = differenceType,
+            Description = description,
+            IsPublic = queryItem.IsPublic ?? false
+        };
     }
 }

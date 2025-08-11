@@ -25,6 +25,9 @@ public class ProjectWizardOptions
     [Display(Name = "Clone Work Items")]
     public bool CloneWorkItems { get; set; } = true;
     
+    [Display(Name = "Clone Work Item Queries")]
+    public bool CloneQueries { get; set; } = true;
+    
     [Display(Name = "Clone Security Groups & Members")]
     public bool CloneSecurityGroups { get; set; } = true;
     
@@ -94,10 +97,10 @@ public class OperationLog
 public class ProjectDifferencesAnalysis
 {
     public WorkItemDifferences WorkItems { get; set; } = new();
-    public ClassificationNodeDifferences ClassificationNodes { get; set; } = new();
+    public QueryDifferences Queries { get; set; } = new();
     public SecurityGroupDifferences SecurityGroups { get; set; } = new();
     public WikiDifferences Wiki { get; set; } = new();
-    public bool HasAnyDifferences => WorkItems.HasChanges || ClassificationNodes.HasChanges || 
+    public bool HasAnyDifferences => WorkItems.HasChanges || Queries.HasChanges || 
                                     SecurityGroups.HasChanges || Wiki.HasChanges;
 }
 
@@ -122,24 +125,25 @@ public class WorkItemDifference
     public bool Selected { get; set; } = false; // For user selection
 }
 
-public class ClassificationNodeDifferences
+public class QueryDifferences
 {
-    public List<ClassificationNodeDifference> MissingAreaPaths { get; set; } = new();
-    public List<ClassificationNodeDifference> MissingIterationPaths { get; set; } = new();
-    public List<ClassificationNodeDifference> DifferentAreaPaths { get; set; } = new();
-    public List<ClassificationNodeDifference> DifferentIterationPaths { get; set; } = new();
-    public bool HasChanges => MissingAreaPaths.Any() || MissingIterationPaths.Any() || 
-                            DifferentAreaPaths.Any() || DifferentIterationPaths.Any();
+    public List<QueryDifference> NewQueries { get; set; } = new();
+    public List<QueryDifference> UpdatedQueries { get; set; } = new();
+    public List<QueryDifference> SynchronizedQueries { get; set; } = new();
+    public List<QueryDifference> MissingFolders { get; set; } = new();
+    public bool HasChanges => NewQueries.Any() || UpdatedQueries.Any() || MissingFolders.Any();
 }
 
-public class ClassificationNodeDifference
+public class QueryDifference
 {
-    public string Path { get; set; } = string.Empty;
+    public string QueryId { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
-    public string? TargetName { get; set; }
-    public string NodeType { get; set; } = string.Empty; // "AreaPath", "IterationPath"
-    public string DifferenceType { get; set; } = string.Empty; // "Missing", "NameDifferent"
+    public string Path { get; set; } = string.Empty;
+    public string QueryType { get; set; } = string.Empty; // "Flat", "Tree", "OneHop"
+    public string? Wiql { get; set; }
+    public string DifferenceType { get; set; } = string.Empty; // "New", "Update", "Synchronized", "Folder"
     public string Description { get; set; } = string.Empty;
+    public bool IsPublic { get; set; }
     public bool Selected { get; set; } = false; // For user selection
 }
 
