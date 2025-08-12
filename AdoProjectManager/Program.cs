@@ -23,6 +23,7 @@ builder.Services.AddScoped<ISettingsService, SettingsService>();
 builder.Services.AddScoped<IAdoService, AdoServiceWorking>();
 builder.Services.AddScoped<IProjectCloneService, ProjectCloneService>();
 builder.Services.AddScoped<IProjectWizardService, ProjectWizardService>();
+builder.Services.AddScoped<WorkItemDeploymentService>();
 
 // Add logging
 builder.Logging.AddConsole();

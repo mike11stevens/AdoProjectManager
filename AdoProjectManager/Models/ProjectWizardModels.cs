@@ -191,3 +191,109 @@ public class SelectiveUpdateRequest
     public string TargetProjectId { get; set; } = string.Empty;
     public ProjectDifferencesAnalysis Differences { get; set; } = new();
 }
+
+// Multi-Project Work Item Deployment Models
+public class WorkItemDeploymentRequest
+{
+    [Required]
+    [Display(Name = "Source/Template Project")]
+    public string SourceProjectId { get; set; } = string.Empty;
+    
+    [Required]
+    [Display(Name = "Target Projects")]
+    public List<string> TargetProjectIds { get; set; } = new();
+    
+    [Display(Name = "Work Items to Deploy")]
+    public List<int> WorkItemIds { get; set; } = new();
+    
+    public WorkItemDeploymentOptions Options { get; set; } = new();
+    
+    // For form display
+    public List<AdoProject> AvailableProjects { get; set; } = new();
+    public List<TemplateWorkItem> AvailableWorkItems { get; set; } = new();
+}
+
+public class WorkItemDeploymentOptions
+{
+    [Display(Name = "Include Work Item History")]
+    public bool IncludeHistory { get; set; } = false;
+    
+    [Display(Name = "Include Attachments")]
+    public bool IncludeAttachments { get; set; } = true;
+    
+    [Display(Name = "Include Links/Relations")]
+    public bool IncludeLinks { get; set; } = true;
+    
+    [Display(Name = "Update Existing Work Items")]
+    public bool UpdateExisting { get; set; } = false;
+    
+    [Display(Name = "Create Area/Iteration Paths if Missing")]
+    public bool CreateMissingPaths { get; set; } = true;
+    
+    [Display(Name = "Map Work Item Types")]
+    public bool MapWorkItemTypes { get; set; } = true;
+}
+
+public class TemplateWorkItem
+{
+    public int Id { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string WorkItemType { get; set; } = string.Empty;
+    public string State { get; set; } = string.Empty;
+    public string Priority { get; set; } = string.Empty;
+    public string AssignedTo { get; set; } = string.Empty;
+    public string AreaPath { get; set; } = string.Empty;
+    public string IterationPath { get; set; } = string.Empty;
+    public bool Selected { get; set; } = false;
+    public string Tags { get; set; } = string.Empty;
+    public int? ParentId { get; set; }
+    public string Description { get; set; } = string.Empty;
+}
+
+public class WorkItemDeploymentResult
+{
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+    public List<ProjectDeploymentResult> ProjectResults { get; set; } = new();
+    public int TotalWorkItemsDeployed { get; set; }
+    public int TotalProjectsProcessed { get; set; }
+    public int SuccessfulProjects { get; set; }
+    public int FailedProjects { get; set; }
+    public TimeSpan Duration { get; set; }
+    public List<string> Warnings { get; set; } = new();
+}
+
+public class ProjectDeploymentResult
+{
+    public string ProjectId { get; set; } = string.Empty;
+    public string ProjectName { get; set; } = string.Empty;
+    public bool Success { get; set; }
+    public string? Error { get; set; }
+    public int WorkItemsCreated { get; set; }
+    public int WorkItemsUpdated { get; set; }
+    public int WorkItemsSkipped { get; set; }
+    public List<WorkItemDeploymentDetail> WorkItemDetails { get; set; } = new();
+    public List<string> Warnings { get; set; } = new();
+    public TimeSpan Duration { get; set; }
+}
+
+public class WorkItemDeploymentDetail
+{
+    public int SourceWorkItemId { get; set; }
+    public int? TargetWorkItemId { get; set; }
+    public string SourceTitle { get; set; } = string.Empty;
+    public string WorkItemType { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty; // "Created", "Updated", "Skipped"
+    public string? Error { get; set; }
+    public bool Success { get; set; }
+    public List<string> Warnings { get; set; } = new();
+}
+
+public class WorkItemTypeMapping
+{
+    public string SourceProjectId { get; set; } = string.Empty;
+    public string TargetProjectId { get; set; } = string.Empty;
+    public Dictionary<string, string> TypeMappings { get; set; } = new(); // Source Type -> Target Type
+    public List<string> SourceTypes { get; set; } = new();
+    public List<string> TargetTypes { get; set; } = new();
+}

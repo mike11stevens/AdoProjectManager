@@ -1,0 +1,167 @@
+@model WorkItemDeploymentRequest
+@{
+    ViewData["Title"] = "Work Item Deployment";
+}
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>
+                    <i class="fas fa-tasks me-2"></i>Work Item Deployment
+                </h2>
+                <div>
+                    <a href="@Url.Action("Deploy")" class="btn btn-primary">
+                        <i class="fas fa-rocket me-1"></i>Start Deployment
+                    </a>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-info-circle me-2"></i>Deploy Work Items from Template Project
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <p class="lead">
+                                Use this tool to deploy selected work items from a source/template project to multiple target projects simultaneously.
+                            </p>
+                            
+                            <h6 class="mt-4 mb-3">Features:</h6>
+                            <ul class="list-unstyled">
+                                <li class="mb-2">
+                                    <i class="fas fa-check-circle text-success me-2"></i>
+                                    <strong>Multi-Project Deployment:</strong> Deploy to multiple target projects at once
+                                </li>
+                                <li class="mb-2">
+                                    <i class="fas fa-check-circle text-success me-2"></i>
+                                    <strong>Selective Work Items:</strong> Choose specific work items to deploy
+                                </li>
+                                <li class="mb-2">
+                                    <i class="fas fa-check-circle text-success me-2"></i>
+                                    <strong>Parent-Child Relationships:</strong> Maintains work item hierarchies
+                                </li>
+                                <li class="mb-2">
+                                    <i class="fas fa-check-circle text-success me-2"></i>
+                                    <strong>Work Item Type Mapping:</strong> Automatic mapping between different project types
+                                </li>
+                                <li class="mb-2">
+                                    <i class="fas fa-check-circle text-success me-2"></i>
+                                    <strong>Area/Iteration Path Adjustment:</strong> Automatically adjusts paths for target projects
+                                </li>
+                                <li class="mb-2">
+                                    <i class="fas fa-check-circle text-success me-2"></i>
+                                    <strong>Detailed Results:</strong> Comprehensive reporting of deployment status
+                                </li>
+                            </ul>
+
+                            <h6 class="mt-4 mb-3">Deployment Options:</h6>
+                            <ul class="list-unstyled">
+                                <li class="mb-1">
+                                    <i class="fas fa-cog text-primary me-2"></i>
+                                    Include work item history and attachments
+                                </li>
+                                <li class="mb-1">
+                                    <i class="fas fa-cog text-primary me-2"></i>
+                                    Include links and relationships
+                                </li>
+                                <li class="mb-1">
+                                    <i class="fas fa-cog text-primary me-2"></i>
+                                    Update existing work items or create new ones
+                                </li>
+                                <li class="mb-1">
+                                    <i class="fas fa-cog text-primary me-2"></i>
+                                    Create missing area/iteration paths automatically
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-light">
+                                <div class="card-header">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-lightbulb me-2"></i>Quick Start
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <ol class="mb-0">
+                                        <li class="mb-2">Select a source/template project</li>
+                                        <li class="mb-2">Choose work items to deploy</li>
+                                        <li class="mb-2">Select target projects</li>
+                                        <li class="mb-2">Configure deployment options</li>
+                                        <li class="mb-0">Execute deployment</li>
+                                    </ol>
+                                </div>
+                            </div>
+
+                            <div class="card bg-warning bg-opacity-10 mt-3">
+                                <div class="card-body">
+                                    <h6 class="text-warning">
+                                        <i class="fas fa-exclamation-triangle me-2"></i>Important Notes
+                                    </h6>
+                                    <ul class="small mb-0">
+                                        <li>Ensure you have appropriate permissions in target projects</li>
+                                        <li>Work item types may be mapped if they don't exist in target projects</li>
+                                        <li>Review deployment results carefully before proceeding with additional deployments</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mt-4">
+                        <div class="col-12">
+                            <div class="d-flex justify-content-center">
+                                <a href="@Url.Action("Deploy")" class="btn btn-primary btn-lg">
+                                    <i class="fas fa-rocket me-2"></i>Start Work Item Deployment
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @if (Model.AvailableProjects?.Any() == true)
+            {
+                <div class="card mt-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-project-diagram me-2"></i>Available Projects (@Model.AvailableProjects.Count)
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            @foreach (var project in Model.AvailableProjects.Take(12))
+                            {
+                                <div class="col-md-3 col-sm-4 col-6 mb-2">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-folder text-primary me-2"></i>
+                                        <small>@project.Name</small>
+                                    </div>
+                                </div>
+                            }
+                            @if (Model.AvailableProjects.Count > 12)
+                            {
+                                <div class="col-12">
+                                    <small class="text-muted">
+                                        <i class="fas fa-info-circle me-1"></i>
+                                        And @(Model.AvailableProjects.Count - 12) more projects available for deployment...
+                                    </small>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        // Add any initialization scripts here if needed
+        console.log('Work Item Deployment page loaded');
+    </script>
+}

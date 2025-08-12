@@ -1,0 +1,723 @@
+@model WorkItemDeploymentRequest
+@{
+    ViewData["Title"] = "Deploy Work Items";
+}
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>
+                    <i class="fas fa-rocket me-2"></i>Deploy Work Items
+                </h2>
+                <nav aria-label="breadcrumb">
+                    <ol class="breadcrumb">
+                        <li class="breadcrumb-item"><a href="@Url.Action("Index")">Work Item Deployment</a></li>
+                        <li class="breadcrumb-item active">Deploy</li>
+                    </ol>
+                </nav>
+            </div>
+
+            <form asp-action="Deploy" method="post" id="deploymentForm">
+                @Html.AntiForgeryToken()
+                
+                <!-- Step 1: Source Project Selection -->
+                <div class="card mb-4" id="step1">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <span class="badge bg-primary me-2">1</span>
+                            Select Source/Template Project
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group mb-3">
+                                    <label asp-for="SourceProjectId" class="form-label">Source Project *</label>
+                                    <div class="input-group">
+                                        <input type="text" class="form-control" id="sourceProjectSearch" placeholder="Search projects..." autocomplete="off">
+                                        <button type="button" class="btn btn-outline-secondary" id="clearSourceSearch">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                    <select asp-for="SourceProjectId" class="form-select mt-2" id="sourceProjectSelect" required style="display: none;">
+                                        <option value="">-- Select Source Project --</option>
+                                    </select>
+                                    <div id="sourceProjectsList" class="border rounded mt-2" style="max-height: 200px; overflow-y: auto; display: none;">
+                                        <div class="p-3 text-center">
+                                            <i class="fas fa-search text-muted me-2"></i>
+                                            <span class="text-muted">Start typing to search projects</span>
+                                        </div>
+                                    </div>
+                                    <span asp-validation-for="SourceProjectId" class="text-danger"></span>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="d-flex align-items-end h-100">
+                                    <button type="button" class="btn btn-outline-primary" id="loadWorkItemsBtn" disabled>
+                                        <i class="fas fa-download me-1"></i>Load Work Items
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Work Item Selection -->
+                <div class="card mb-4" id="step2" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <span class="badge bg-primary me-2">2</span>
+                            Select Work Items to Deploy
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="selectAllWorkItems">
+                                    <i class="fas fa-check-square me-1"></i>Select All
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="clearAllWorkItems">
+                                    <i class="fas fa-square me-1"></i>Clear All
+                                </button>
+                            </div>
+                            <div>
+                                <span id="selectedWorkItemsCount" class="badge bg-info">0 selected</span>
+                            </div>
+                        </div>
+                        
+                        <div id="workItemsContainer">
+                            <div class="text-center py-4">
+                                <i class="fas fa-info-circle text-muted me-2"></i>
+                                <span class="text-muted">Select a source project to load work items</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Target Projects Selection -->
+                <div class="card mb-4" id="step3" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <span class="badge bg-primary me-2">3</span>
+                            Select Target Projects
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <div class="input-group" style="width: 300px;">
+                                    <input type="text" class="form-control" id="targetProjectSearch" placeholder="Search target projects..." autocomplete="off">
+                                    <button type="button" class="btn btn-outline-secondary" id="clearTargetSearch">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="selectAllProjects">
+                                    <i class="fas fa-check-square me-1"></i>Select All
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="clearAllProjects">
+                                    <i class="fas fa-square me-1"></i>Clear All
+                                </button>
+                                <span id="selectedProjectsCount" class="badge bg-info ms-2">0 selected</span>
+                            </div>
+                        </div>
+
+                        <div id="targetProjectsContainer" class="border rounded p-3" style="min-height: 200px; max-height: 400px; overflow-y: auto;">
+                            <div class="text-center py-4">
+                                <i class="fas fa-search text-muted me-2"></i>
+                                <span class="text-muted">Start typing to search for target projects</span>
+                            </div>
+                        </div>
+                        
+                        <div class="text-center mt-3">
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="loadMoreProjects" style="display: none;">
+                                <i class="fas fa-chevron-down me-1"></i>Load More Projects
+                            </button>
+                        </div>
+                        <span asp-validation-for="TargetProjectIds" class="text-danger"></span>
+                    </div>
+                </div>
+
+                <!-- Step 4: Deployment Options -->
+                <div class="card mb-4" id="step4" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <span class="badge bg-primary me-2">4</span>
+                            Deployment Options
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-check mb-3">
+                                    <input asp-for="Options.IncludeAttachments" class="form-check-input" type="checkbox">
+                                    <label asp-for="Options.IncludeAttachments" class="form-check-label">
+                                        Include Attachments
+                                    </label>
+                                </div>
+                                <div class="form-check mb-3">
+                                    <input asp-for="Options.IncludeLinks" class="form-check-input" type="checkbox">
+                                    <label asp-for="Options.IncludeLinks" class="form-check-label">
+                                        Include Links/Relations
+                                    </label>
+                                </div>
+                                <div class="form-check mb-3">
+                                    <input asp-for="Options.IncludeHistory" class="form-check-input" type="checkbox">
+                                    <label asp-for="Options.IncludeHistory" class="form-check-label">
+                                        Include Work Item History
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check mb-3">
+                                    <input asp-for="Options.UpdateExisting" class="form-check-input" type="checkbox">
+                                    <label asp-for="Options.UpdateExisting" class="form-check-label">
+                                        Update Existing Work Items
+                                    </label>
+                                </div>
+                                <div class="form-check mb-3">
+                                    <input asp-for="Options.CreateMissingPaths" class="form-check-input" type="checkbox">
+                                    <label asp-for="Options.CreateMissingPaths" class="form-check-label">
+                                        Create Missing Area/Iteration Paths
+                                    </label>
+                                </div>
+                                <div class="form-check mb-3">
+                                    <input asp-for="Options.MapWorkItemTypes" class="form-check-input" type="checkbox">
+                                    <label asp-for="Options.MapWorkItemTypes" class="form-check-label">
+                                        Map Work Item Types
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Summary and Submit -->
+                <div class="card" id="summaryCard" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-check-circle me-2"></i>Deployment Summary
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <h6>Source Project</h6>
+                                <p id="sourceSummary" class="text-muted">Not selected</p>
+                            </div>
+                            <div class="col-md-4">
+                                <h6>Work Items</h6>
+                                <p id="workItemsSummary" class="text-muted">0 work items selected</p>
+                            </div>
+                            <div class="col-md-4">
+                                <h6>Target Projects</h6>
+                                <p id="targetsSummary" class="text-muted">0 projects selected</p>
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-center mt-4">
+                            <button type="submit" class="btn btn-success btn-lg" id="executeDeploymentBtn" disabled>
+                                <i class="fas fa-rocket me-2"></i>Execute Deployment
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden fields for selected work items -->
+<div id="hiddenWorkItemFields"></div>
+
+@section Scripts {
+    <script>
+        let availableWorkItems = [];
+        let selectedWorkItems = [];
+        let selectedProjects = [];
+        let sourceProjectSearchTimeout;
+        let targetProjectSearchTimeout;
+        let currentTargetPage = 1;
+        let targetSearchTerm = '';
+        let hasMoreTargetProjects = false;
+        let allTargetProjects = [];
+
+        $(document).ready(function() {
+            // Source project search handler
+            $('#sourceProjectSearch').on('input', function() {
+                const searchTerm = $(this).val();
+                clearTimeout(sourceProjectSearchTimeout);
+                
+                if (searchTerm.length >= 2) {
+                    sourceProjectSearchTimeout = setTimeout(() => {
+                        searchSourceProjects(searchTerm);
+                    }, 300);
+                } else {
+                    $('#sourceProjectsList').hide();
+                }
+            });
+
+            // Clear source search
+            $('#clearSourceSearch').click(function() {
+                $('#sourceProjectSearch').val('');
+                $('#sourceProjectsList').hide();
+                $('#sourceProjectSelect').empty().append('<option value="">-- Select Source Project --</option>').val('');
+                $('#loadWorkItemsBtn').prop('disabled', true);
+                hideSteps([2, 3, 4]);
+            });
+
+            // Target project search handler
+            $('#targetProjectSearch').on('input', function() {
+                const searchTerm = $(this).val();
+                clearTimeout(targetProjectSearchTimeout);
+                targetSearchTerm = searchTerm;
+                currentTargetPage = 1;
+                
+                if (searchTerm.length >= 2) {
+                    targetProjectSearchTimeout = setTimeout(() => {
+                        searchTargetProjects(searchTerm, 1, true);
+                    }, 300);
+                } else if (searchTerm.length === 0) {
+                    // Show initial message when search is cleared
+                    $('#targetProjectsContainer').html(`
+                        <div class="text-center py-4">
+                            <i class="fas fa-search text-muted me-2"></i>
+                            <span class="text-muted">Start typing to search for target projects</span>
+                        </div>
+                    `);
+                    $('#loadMoreProjects').hide();
+                }
+            });
+
+            // Clear target search
+            $('#clearTargetSearch').click(function() {
+                $('#targetProjectSearch').val('');
+                targetSearchTerm = '';
+                currentTargetPage = 1;
+                $('#targetProjectsContainer').html(`
+                    <div class="text-center py-4">
+                        <i class="fas fa-search text-muted me-2"></i>
+                        <span class="text-muted">Start typing to search for target projects</span>
+                    </div>
+                `);
+                $('#loadMoreProjects').hide();
+                updateSelectedProjects();
+            });
+
+            // Load more projects button
+            $('#loadMoreProjects').click(function() {
+                if (hasMoreTargetProjects) {
+                    currentTargetPage++;
+                    searchTargetProjects(targetSearchTerm, currentTargetPage, false);
+                }
+            });
+
+            // Load work items button handler
+            $('#loadWorkItemsBtn').click(function() {
+                console.log('Load work items button clicked');
+                const sourceProjectId = $('#sourceProjectSelect').val();
+                console.log('Source project ID:', sourceProjectId);
+                if (!sourceProjectId) {
+                    console.log('No source project selected');
+                    return;
+                }
+
+                loadWorkItems(sourceProjectId);
+            });
+
+            // Target project checkboxes (delegated event handler)
+            $(document).on('change', '.target-project-checkbox', function() {
+                updateSelectedProjects();
+                updateSummary();
+                checkFormCompletion();
+            });
+
+            // Work item checkboxes
+            $(document).on('change', '.work-item-checkbox', function() {
+                updateSelectedWorkItems();
+                updateSummary();
+                checkFormCompletion();
+            });
+
+            // Select/Clear all buttons
+            $('#selectAllWorkItems').click(() => toggleAllWorkItems(true));
+            $('#clearAllWorkItems').click(() => toggleAllWorkItems(false));
+            $('#selectAllProjects').click(() => toggleAllProjects(true));
+            $('#clearAllProjects').click(() => toggleAllProjects(false));
+
+            // Form submission handler
+            $('#deploymentForm').submit(function(e) {
+                e.preventDefault();
+                
+                // Add hidden fields for selected work items
+                addHiddenWorkItemFields();
+                
+                // Submit the form
+                this.submit();
+            });
+        });
+
+        function searchSourceProjects(searchTerm) {
+            $('#sourceProjectsList').html(`
+                <div class="p-3 text-center">
+                    <i class="fas fa-spinner fa-spin me-2"></i>
+                    <span>Searching projects...</span>
+                </div>
+            `).show();
+
+            $.post('@Url.Action("SearchProjects")', { searchTerm: searchTerm, page: 1, pageSize: 10 })
+                .done(function(response) {
+                    if (response.error) {
+                        $('#sourceProjectsList').html(`
+                            <div class="p-3 text-center text-danger">
+                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                <span>${response.error}</span>
+                            </div>
+                        `);
+                        return;
+                    }
+
+                    let html = '';
+                    if (response.projects.length === 0) {
+                        html = `
+                            <div class="p-3 text-center text-muted">
+                                <i class="fas fa-info-circle me-2"></i>
+                                <span>No projects found</span>
+                            </div>
+                        `;
+                    } else {
+                        response.projects.forEach(function(project) {
+                            html += `
+                                <div class="p-2 border-bottom project-option" data-id="${project.id}" data-name="${project.name}" style="cursor: pointer;">
+                                    <div class="fw-bold">${project.name}</div>
+                                    ${project.description ? `<small class="text-muted">${project.description}</small>` : ''}
+                                </div>
+                            `;
+                        });
+                    }
+                    
+                    $('#sourceProjectsList').html(html);
+                })
+                .fail(function() {
+                    $('#sourceProjectsList').html(`
+                        <div class="p-3 text-center text-danger">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            <span>Error loading projects</span>
+                        </div>
+                    `);
+                });
+        }
+
+        function searchTargetProjects(searchTerm, page = 1, replace = true) {
+            if (replace) {
+                $('#targetProjectsContainer').html(`
+                    <div class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin me-2"></i>
+                        <span>Searching projects...</span>
+                    </div>
+                `);
+                $('#loadMoreProjects').hide();
+            } else {
+                $('#loadMoreProjects').html('<i class="fas fa-spinner fa-spin me-1"></i>Loading...').prop('disabled', true);
+            }
+
+            $.post('@Url.Action("SearchProjects")', { searchTerm: searchTerm, page: page, pageSize: 20 })
+                .done(function(response) {
+                    if (response.error) {
+                        if (replace) {
+                            $('#targetProjectsContainer').html(`
+                                <div class="text-center py-4 text-danger">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <span>${response.error}</span>
+                                </div>
+                            `);
+                        }
+                        return;
+                    }
+
+                    const sourceProjectId = $('#sourceProjectSelect').val();
+                    let html = '';
+                    
+                    if (replace) {
+                        allTargetProjects = [];
+                        if (response.projects.length === 0) {
+                            html = `
+                                <div class="text-center py-4 text-muted">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <span>No projects found matching "${searchTerm}"</span>
+                                </div>
+                            `;
+                        }
+                    }
+
+                    // Filter out source project and add to collection
+                    const filteredProjects = response.projects.filter(p => p.id !== sourceProjectId);
+                    allTargetProjects = replace ? filteredProjects : [...allTargetProjects, ...filteredProjects];
+                    
+                    // Generate HTML for all projects
+                    if (allTargetProjects.length > 0) {
+                        html = '<div class="row">';
+                        allTargetProjects.forEach(function(project) {
+                            const isChecked = selectedProjects.some(sp => sp.id === project.id);
+                            html += `
+                                <div class="col-md-4 col-sm-6 col-12 mb-2">
+                                    <div class="form-check">
+                                        <input class="form-check-input target-project-checkbox" type="checkbox" 
+                                               name="TargetProjectIds" value="${project.id}" id="project_${project.id}"
+                                               ${isChecked ? 'checked' : ''}>
+                                        <label class="form-check-label" for="project_${project.id}" title="${project.description || project.name}">
+                                            ${project.name}
+                                        </label>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        html += '</div>';
+                    }
+                    
+                    $('#targetProjectsContainer').html(html);
+                    
+                    // Update load more button
+                    hasMoreTargetProjects = response.hasMore;
+                    if (hasMoreTargetProjects) {
+                        $('#loadMoreProjects').show().html('<i class="fas fa-chevron-down me-1"></i>Load More Projects').prop('disabled', false);
+                    } else {
+                        $('#loadMoreProjects').hide();
+                    }
+                })
+                .fail(function() {
+                    if (replace) {
+                        $('#targetProjectsContainer').html(`
+                            <div class="text-center py-4 text-danger">
+                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                <span>Error loading projects</span>
+                            </div>
+                        `);
+                    } else {
+                        $('#loadMoreProjects').html('<i class="fas fa-chevron-down me-1"></i>Load More Projects').prop('disabled', false);
+                    }
+                });
+        }
+
+        // Handle source project selection
+        $(document).on('click', '.project-option', function() {
+            const projectId = $(this).data('id');
+            const projectName = $(this).data('name');
+            
+            console.log('Project selected - ID:', projectId, 'Name:', projectName);
+            
+            // Clear existing options and add the selected project
+            $('#sourceProjectSelect').empty();
+            $('#sourceProjectSelect').append(`<option value="${projectId}">${projectName}</option>`);
+            $('#sourceProjectSelect').val(projectId);
+            
+            $('#sourceProjectSearch').val(projectName);
+            $('#sourceProjectsList').hide();
+            $('#loadWorkItemsBtn').prop('disabled', false);
+            
+            console.log('Load Work Items button enabled:', !$('#loadWorkItemsBtn').prop('disabled'));
+            console.log('Select element value after setting:', $('#sourceProjectSelect').val());
+            console.log('Select element exists:', $('#sourceProjectSelect').length > 0);
+            
+            updateSummary();
+        });
+
+        function loadWorkItems(sourceProjectId) {
+            console.log('loadWorkItems called with sourceProjectId:', sourceProjectId);
+            $('#loadWorkItemsBtn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-1"></i>Loading...');
+            
+            var token = $('input[name="__RequestVerificationToken"]').val();
+            console.log('Anti-forgery token found:', token ? 'YES' : 'NO');
+            
+            var url = '@Url.Action("LoadWorkItems")';
+            console.log('AJAX URL:', url);
+            console.log('About to make AJAX call...');
+            
+            $.post(url, { 
+                sourceProjectId: sourceProjectId,
+                __RequestVerificationToken: token
+            })
+                .done(function(response) {
+                    console.log('AJAX response received:', response);
+                    if (response.success) {
+                        availableWorkItems = response.workItems;
+                        displayWorkItems(response.workItems);
+                        console.log('About to show steps 2, 3, 4');
+                        showStep(2);
+                        showStep(3);
+                        showStep(4);
+                        $('#summaryCard').show();
+                        updateSummary();
+                        console.log('Steps should now be visible');
+                    } else {
+                        alert('Error loading work items: ' + response.error);
+                    }
+                })
+                .fail(function(xhr, status, error) {
+                    console.error('AJAX failed:', status, error, xhr.responseText);
+                    alert('Error loading work items from server');
+                })
+                .always(function() {
+                    $('#loadWorkItemsBtn').prop('disabled', false).html('<i class="fas fa-download me-1"></i>Load Work Items');
+                });
+        }
+
+        function displayWorkItems(workItems) {
+            let html = '';
+            
+            if (workItems.length === 0) {
+                html = '<div class="text-center py-4"><i class="fas fa-info-circle text-muted me-2"></i><span class="text-muted">No work items found in the selected project</span></div>';
+            } else {
+                html = '<div class="table-responsive"><table class="table table-sm table-hover">';
+                html += '<thead><tr><th width="50">Select</th><th>ID</th><th>Title</th><th>Type</th><th>State</th><th>Priority</th></tr></thead><tbody>';
+                
+                workItems.forEach(function(wi) {
+                    const priorityClass = wi.priority === 'High' ? 'text-danger' : wi.priority === 'Medium' ? 'text-warning' : 'text-muted';
+                    html += `<tr>
+                        <td><input type="checkbox" class="form-check-input work-item-checkbox" value="${wi.id}" data-title="${wi.title}"></td>
+                        <td><span class="badge bg-secondary">${wi.id}</span></td>
+                        <td><strong>${wi.title}</strong></td>
+                        <td><span class="badge bg-info">${wi.workItemType}</span></td>
+                        <td><span class="badge bg-primary">${wi.state}</span></td>
+                        <td><span class="${priorityClass}">${wi.priority || 'N/A'}</span></td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table></div>';
+            }
+            
+            $('#workItemsContainer').html(html);
+        }
+
+        function showStep(stepNumber) {
+            console.log('showStep called with stepNumber:', stepNumber);
+            const stepElement = $(`#step${stepNumber}`);
+            console.log('Step element found:', stepElement.length > 0);
+            stepElement.show();
+            console.log('Step', stepNumber, 'visibility after show():', stepElement.is(':visible'));
+        }
+
+        function hideSteps(stepNumbers) {
+            stepNumbers.forEach(num => $(`#step${num}`).hide());
+            $('#summaryCard').hide();
+        }
+
+        function updateSelectedWorkItems() {
+            selectedWorkItems = [];
+            $('.work-item-checkbox:checked').each(function() {
+                selectedWorkItems.push({
+                    id: parseInt($(this).val()),
+                    title: $(this).data('title')
+                });
+            });
+            $('#selectedWorkItemsCount').text(`${selectedWorkItems.length} selected`);
+        }
+
+        function updateSelectedProjects() {
+            selectedProjects = [];
+            $('.target-project-checkbox:checked').each(function() {
+                const sourceProjectId = $('#sourceProjectSelect').val();
+                const projectId = $(this).val();
+                
+                // Don't include source project in targets
+                if (projectId !== sourceProjectId) {
+                    selectedProjects.push({
+                        id: projectId,
+                        name: $(this).siblings('label').text().trim()
+                    });
+                } else {
+                    // Uncheck if it's the source project
+                    $(this).prop('checked', false);
+                }
+            });
+            $('#selectedProjectsCount').text(`${selectedProjects.length} selected`);
+        }
+
+        function updateSummary() {
+            const sourceProject = $('#sourceProjectSelect option:selected').text();
+            $('#sourceSummary').text(sourceProject || 'Not selected');
+            $('#workItemsSummary').text(`${selectedWorkItems.length} work items selected`);
+            $('#targetsSummary').text(`${selectedProjects.length} projects selected`);
+        }
+
+        function toggleAllWorkItems(select) {
+            $('.work-item-checkbox').prop('checked', select);
+            updateSelectedWorkItems();
+            updateSummary();
+            checkFormCompletion();
+        }
+
+        function toggleAllProjects(select) {
+            $('.target-project-checkbox').prop('checked', select);
+            updateSelectedProjects();
+            updateSummary();
+            checkFormCompletion();
+        }
+
+        function checkFormCompletion() {
+            const hasSource = $('#sourceProjectSelect').val();
+            const hasWorkItems = selectedWorkItems.length > 0;
+            const hasTargets = selectedProjects.length > 0;
+            
+            $('#executeDeploymentBtn').prop('disabled', !(hasSource && hasWorkItems && hasTargets));
+        }
+
+        function addHiddenWorkItemFields() {
+            $('#hiddenWorkItemFields').empty();
+            selectedWorkItems.forEach(function(wi) {
+                $('#hiddenWorkItemFields').append(`<input type="hidden" name="WorkItemIds" value="${wi.id}">`);
+            });
+        }
+    </script>
+}
+
+@section Styles {
+    <style>
+        .card {
+            border: none;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        }
+        
+        .badge {
+            font-size: 0.75em;
+        }
+        
+        .table th {
+            border-top: none;
+            font-weight: 600;
+        }
+        
+        .form-check-input:checked {
+            background-color: var(--bs-primary);
+            border-color: var(--bs-primary);
+        }
+        
+        .table-hover tbody tr:hover {
+            background-color: rgba(0, 123, 255, 0.05);
+        }
+        
+        .project-option:hover {
+            background-color: rgba(0, 123, 255, 0.1);
+        }
+        
+        #sourceProjectsList {
+            z-index: 1000;
+            background: white;
+            border: 1px solid #dee2e6;
+        }
+        
+        .project-option {
+            transition: background-color 0.2s ease;
+        }
+        
+        .form-check-label {
+            cursor: pointer;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    </style>
+}

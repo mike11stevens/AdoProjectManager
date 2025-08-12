@@ -1,0 +1,347 @@
+@model WorkItemDeploymentRequest
+@{
+    ViewData["Title"] = "Deployment Progress";
+}
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>
+                    <i class="fas fa-rocket me-2"></i>Deployment Progress
+                </h2>
+                <nav aria-label="breadcrumb">
+                    <ol class="breadcrumb">
+                        <li class="breadcrumb-item"><a href="@Url.Action("Index")">Work Item Deployment</a></li>
+                        <li class="breadcrumb-item"><a href="@Url.Action("Deploy")">Deploy</a></li>
+                        <li class="breadcrumb-item active">Progress</li>
+                    </ol>
+                </nav>
+            </div>
+
+            <!-- Deployment Summary -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-info-circle me-2"></i>Deployment Summary
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <strong>Source Project:</strong><br>
+                            <span id="sourceProjectName">@(Model?.AvailableProjects?.FirstOrDefault(p => p.Id == Model.SourceProjectId)?.Name ?? "Unknown")</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Work Items:</strong><br>
+                            <span id="workItemCount">@(Model?.WorkItemIds?.Count ?? 0) items</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Target Projects:</strong><br>
+                            <span id="targetProjectCount">@(Model?.TargetProjectIds?.Count ?? 0) projects</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Status:</strong><br>
+                            <span id="deploymentStatus" class="badge bg-warning">Preparing...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="fw-bold">Overall Progress</span>
+                        <span id="overallPercent">0%</span>
+                    </div>
+                    <div class="progress" style="height: 25px;">
+                        <div id="overallProgress" class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                            <span id="progressText">Initializing...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Current Activity -->
+            <div class="card mb-4" id="activityCard">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-tasks me-2"></i>Current Activity
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div id="currentActivity" class="text-muted">
+                        <i class="fas fa-spinner fa-spin me-2"></i>Preparing deployment...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Project Results -->
+            <div class="card mb-4" id="resultsCard" style="display: none;">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-chart-bar me-2"></i>Project Results
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div id="projectResults"></div>
+                </div>
+            </div>
+
+            <!-- Deployment Log -->
+            <div class="card" id="logCard">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-file-alt me-2"></i>Deployment Log
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div id="deploymentLog" style="height: 300px; overflow-y: auto; background-color: #f8f9fa; padding: 15px; border-radius: 5px; font-family: monospace; font-size: 0.875rem;">
+                        <div class="log-entry">
+                            <span class="text-muted">[<span id="startTime"></span>]</span> 
+                            <span class="text-info">Starting work item deployment...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="d-flex justify-content-between mt-4" id="actionButtons">
+                <a href="@Url.Action("Deploy")" class="btn btn-outline-secondary">
+                    <i class="fas fa-arrow-left me-1"></i>Back to Deploy
+                </a>
+                <div>
+                    <button type="button" class="btn btn-primary" id="startDeploymentBtn">
+                        <i class="fas fa-play me-1"></i>Start Deployment
+                    </button>
+                    <button type="button" class="btn btn-success" id="viewResultsBtn" style="display: none;">
+                        <i class="fas fa-chart-line me-1"></i>View Detailed Results
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        let deploymentData = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model));
+        let deploymentResult = null;
+        let isDeploymentRunning = false;
+
+        $(document).ready(function() {
+            // Set start time
+            $('#startTime').text(new Date().toLocaleTimeString());
+
+            // Start deployment button handler
+            $('#startDeploymentBtn').click(function() {
+                if (!isDeploymentRunning) {
+                    startDeployment();
+                }
+            });
+
+            // View results button handler
+            $('#viewResultsBtn').click(function() {
+                if (deploymentResult) {
+                    showDetailedResults(deploymentResult);
+                }
+            });
+        });
+
+        function startDeployment() {
+            isDeploymentRunning = true;
+            $('#startDeploymentBtn').prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-1"></i>Deploying...');
+            $('#deploymentStatus').removeClass('bg-warning').addClass('bg-info').text('Running');
+            
+            addLogEntry('Initiating deployment process...', 'info');
+            updateProgress(10, 'Validating request...');
+
+            // Execute the deployment
+            $.ajax({
+                url: '@Url.Action("ExecuteDeployment")',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(deploymentData),
+                timeout: 300000, // 5 minutes timeout
+                success: function(response) {
+                    if (response.success) {
+                        deploymentResult = response.result;
+                        handleDeploymentSuccess(response.result);
+                    } else {
+                        handleDeploymentError(response.error);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    handleDeploymentError(`Server error: ${error}`);
+                },
+                complete: function() {
+                    isDeploymentRunning = false;
+                }
+            });
+        }
+
+        function handleDeploymentSuccess(result) {
+            updateProgress(100, 'Deployment completed!');
+            $('#deploymentStatus').removeClass('bg-info').addClass('bg-success').text('Completed');
+            
+            addLogEntry(`Deployment completed successfully!`, 'success');
+            addLogEntry(`Total projects processed: ${result.totalProjectsProcessed}`, 'info');
+            addLogEntry(`Successful projects: ${result.successfulProjects}`, 'success');
+            addLogEntry(`Failed projects: ${result.failedProjects}`, result.failedProjects > 0 ? 'warning' : 'info');
+            addLogEntry(`Total work items deployed: ${result.totalWorkItemsDeployed}`, 'success');
+            addLogEntry(`Duration: ${formatDuration(result.duration)}`, 'info');
+
+            // Show project results
+            displayProjectResults(result.projectResults);
+            $('#resultsCard').show();
+
+            // Update buttons
+            $('#startDeploymentBtn').hide();
+            $('#viewResultsBtn').show();
+        }
+
+        function handleDeploymentError(error) {
+            updateProgress(0, 'Deployment failed');
+            $('#deploymentStatus').removeClass('bg-info').addClass('bg-danger').text('Failed');
+            
+            addLogEntry(`Deployment failed: ${error}`, 'error');
+            
+            // Re-enable start button
+            $('#startDeploymentBtn').prop('disabled', false).html('<i class="fas fa-play me-1"></i>Retry Deployment');
+        }
+
+        function updateProgress(percent, text) {
+            $('#overallProgress').css('width', percent + '%').attr('aria-valuenow', percent);
+            $('#overallPercent').text(percent + '%');
+            $('#progressText').text(text);
+            
+            if (percent === 100) {
+                $('#overallProgress').removeClass('progress-bar-animated');
+            }
+        }
+
+        function addLogEntry(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const typeClass = {
+                'info': 'text-info',
+                'success': 'text-success',
+                'warning': 'text-warning',
+                'error': 'text-danger'
+            }[type] || 'text-muted';
+
+            const logEntry = `
+                <div class="log-entry">
+                    <span class="text-muted">[${timestamp}]</span> 
+                    <span class="${typeClass}">${message}</span>
+                </div>
+            `;
+            
+            $('#deploymentLog').append(logEntry);
+            $('#deploymentLog').scrollTop($('#deploymentLog')[0].scrollHeight);
+        }
+
+        function displayProjectResults(projectResults) {
+            let html = '<div class="row">';
+            
+            projectResults.forEach(function(project) {
+                const statusClass = project.success ? 'success' : 'danger';
+                const statusIcon = project.success ? 'check-circle' : 'times-circle';
+                
+                html += `
+                    <div class="col-md-6 col-lg-4 mb-3">
+                        <div class="card border-${statusClass}">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <h6 class="card-title mb-0">${project.projectName}</h6>
+                                    <i class="fas fa-${statusIcon} text-${statusClass}"></i>
+                                </div>
+                                <div class="small">
+                                    <div class="mb-1">
+                                        <span class="text-success">${project.workItemsCreated} created</span> |
+                                        <span class="text-info">${project.workItemsUpdated} updated</span> |
+                                        <span class="text-muted">${project.workItemsSkipped} skipped</span>
+                                    </div>
+                                    <div class="text-muted">
+                                        Duration: ${formatDuration(project.duration)}
+                                    </div>
+                                    ${project.error ? `<div class="text-danger mt-1">${project.error}</div>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            $('#projectResults').html(html);
+        }
+
+        function formatDuration(duration) {
+            // Assuming duration is in format "00:00:00.0000000"
+            if (typeof duration === 'string' && duration.includes(':')) {
+                const parts = duration.split(':');
+                const minutes = parseInt(parts[1]);
+                const seconds = Math.round(parseFloat(parts[2]));
+                
+                if (minutes > 0) {
+                    return `${minutes}m ${seconds}s`;
+                } else {
+                    return `${seconds}s`;
+                }
+            }
+            return duration || 'N/A';
+        }
+
+        function showDetailedResults(result) {
+            // Create a modal or navigate to a detailed results page
+            const resultsWindow = window.open('', '_blank', 'width=1000,height=700,scrollbars=yes');
+            
+            const htmlContent = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Deployment Results</title>
+                    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+                    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+                </head>
+                <body>
+                    <div class="container-fluid p-4">
+                        <h2><i class="fas fa-chart-line me-2"></i>Detailed Deployment Results</h2>
+                        <pre>${JSON.stringify(result, null, 2)}</pre>
+                    </div>
+                </body>
+                </html>
+            `;
+            
+            resultsWindow.document.write(htmlContent);
+            resultsWindow.document.close();
+        }
+    </script>
+}
+
+@section Styles {
+    <style>
+        .log-entry {
+            margin-bottom: 5px;
+            line-height: 1.4;
+        }
+        
+        .progress-bar {
+            font-weight: bold;
+        }
+        
+        .card.border-success {
+            border-color: #198754 !important;
+        }
+        
+        .card.border-danger {
+            border-color: #dc3545 !important;
+        }
+        
+        #deploymentLog {
+            max-height: 400px;
+        }
+    </style>
+}
